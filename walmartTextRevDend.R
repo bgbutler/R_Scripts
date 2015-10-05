@@ -25,7 +25,7 @@ library(dendextendRcpp)
 data(zipcode)
 
 #get a list of the files
-url <- "K:/Sandbox/R/Data IO/WalMartv2.csv"
+url <- "K:/Sandbox/R/Data/WalMartv2.csv"
 wmRaw <- read.csv(url, header = TRUE, sep=",", as.is = FALSE)
 
 #get the clean text - drops 15 observations
@@ -159,7 +159,7 @@ wm.d <- data.frame(word = names(wmV), freq=wmV)
 table(wm.d$freq)
 
 #from the r-page build giant cloud for walmart
-png("walmartCloud4.png", width = 1280, height = 800)
+png("walmartCloud5.png", width = 1280, height = 800)
 wordcloud(wm.d$word, wm.d$freq,scale=c(8,.2), min.freq = 3, max.words = 500,
           random.order = FALSE,rot.per=0.15, use.r.layout=FALSE,
           colors = brewer.pal(8,"Dark2"))
