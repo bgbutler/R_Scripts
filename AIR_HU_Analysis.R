@@ -5,7 +5,7 @@ library(ggplot2)
 
 
 #set up the data by importing the .CSV files
-dataURL <- "~/Desktop/SII Data Work/US HU Data Only for R.csv"
+dataURL <- "~/Documents/Sirius SII/SII Data Work/US HU Data Only for R.csv"
 huDataAll <- read.csv(dataURL, header = TRUE, as.is = TRUE, sep = "," )
 
 
