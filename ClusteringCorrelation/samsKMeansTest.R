@@ -22,6 +22,7 @@ test3 <- test3[,c(3:12,15:20)]
 #######################
 #plot the dendrogram
 #check the clustering of the responses
+#this tests for 4 centers, presentation had 3
 par(mar=c(2,2,2,4))
 d <- dist(test3, method = "euclidean")
 hc <- hclust(d)
@@ -65,6 +66,7 @@ testDf <- test3[-splitIndex,]
 
 prop.table(table(testDf$Cluster3))
 
+####### DISREGARD THIS FOR THE PRESENTATION ##########
 # this is the training phase that finds the seeds
 seeds <- numeric()
 diags <- numeric()
@@ -89,6 +91,8 @@ unique(diags)
 
 # using the seeds, find the best one to use in the algorithm
 # this is the training phase that finds the seeds
+# this was done to compare to another k-means method where the clusters were provided
+
 seedsTest <- numeric()
 diagsTest <- numeric()
 
@@ -109,6 +113,7 @@ for (n in 1:length(seeds) ){
 
 
 ########################
+##### This handles the results from the unsupervised learning
 #make dummy vars for segments
 #make factors out of outcomes and clusters
 test3$Cluster3 <- as.factor(as.character(test3$Cluster3))
@@ -153,7 +158,9 @@ Segment1 <- dmyDf[,c(1:16)]
 Segment2 <- dmyDf[,c(1:15,17)]
 Segment3 <- dmyDf[,c(1:15,18)]
 
-#testing and training data for regression
+# testing and training data for regression
+# this is a function to split the data
+# enter the dataframe to split, the outcome variable to split on, training name, testing name, split proportion
 splitData <- function(df,outcomeName, tr, te, p){
   set.seed(1234)
   splitIndex <- createDataPartition(df[,outcomeName], 
@@ -166,7 +173,7 @@ splitData <- function(df,outcomeName, tr, te, p){
 
 
 ##########################################
-
+#### SUPERVISED ML
 #create the new dataset
 gl1 <- cbind(dmyDf[1:15],tempOutcome[1])
 gl2 <- cbind(dmyDf[1:15],tempOutcome[2])
@@ -186,7 +193,7 @@ outcome <- "Cluster.2"
 outcome <- "Cluster.3"
 
 
-
+### ELASTIC NET (GLMNET)
 objControl <- trainControl(method = 'cv', number = 3, returnResamp = 'none')
 objModel <- train(train1Df[,predictorNames], train1Df[,outcome],
                   method = 'glmnet',
@@ -214,7 +221,7 @@ coef(objModel$finalModel, objModel$bestTune$lambda)
 
 #glmnet is very good
 ###########################################################
-#logistic
+# LOGISTIC REGRESSION
 #use the segment df's created earlier
 #then make training and testing sets
 
@@ -236,7 +243,7 @@ test2Df$Cluster.2 <- as.factor(as.character(test2Df$Cluster.2))
 train3Df$Cluster.3 <- as.factor(as.character(train3Df$Cluster.3))
 test3Df$Cluster.3 <- as.factor(as.character(test3Df$Cluster.3))
 
-
+## THIS SETS UP THE 'VOTING'
 train1Df$Cluster.1 <- ifelse(train1Df$Cluster.1 =="1", "Seg1", "other")
 test1Df$Cluster.1 <- ifelse(test1Df$Cluster.1 =="1", "Seg1", "other")
 
