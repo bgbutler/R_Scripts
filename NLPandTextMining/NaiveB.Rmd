@@ -1,0 +1,275 @@
+---
+title: "Naive Bayes"
+author: ""
+date: ""
+output:
+  html_document:
+    toc: false
+    toc_depth: 1
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, cache.lazy = FALSE)
+```
+
+
+# <strong>Naive Bayes</strong> {.tabset .tabset-fade .tabset-pills}
+
+
+## Naive Bayes Model
+```{r loadLibraries, echo=T, warning=FALSE, message=FALSE, cache = F, tidy=T}
+
+library(ggplot2)
+library(reshape2)
+library(scales)
+library(readxl)
+library(SnowballC)          # Porter's word stemming
+library(textstem)           # Perform setmming and lemmatization
+library(tm)                 # Text Cleaning and Processing
+library(RTextTools)         # Automatic Text Classification via Supervised Learning
+library(stringi)            # For processing strings
+library(wordcloud)          # Plot word clouds
+library(wordcloud2)         # Fancy plotting of word clouds
+library(RWeka)              # Machine Learning Java Library for Tokenization
+library(tidytext)           # Additional Text Processing Library (new from RStudio)
+library(tidyr)              
+library(knitr)
+library(dendextend)         # Making Dendograms
+library(dendextendRcpp)     # Supporting package for dendextend
+library(qdap)               # Bridge Gap Between Qualitative Data and Quantitative Analysis
+
+
+# Modeling Libraries
+library(caret)
+library(Metrics)
+library(pROC)
+library(naivebayes)         # Naive Bayes package
+library(klaR)               # Alternative NB package
+library(e1071)              # Windows specific modeling package best NB package
+library(caTools)            # Utility function to help modeling split
+library(randomForest)
+
+# Manipulating Data
+library(dplyr)
+```
+
+<style>
+  .main-container {
+    max-width: 1200px !important;
+    margin-left: auto;
+    margin-right: auto;
+  }
+</style>
+
+
+
+```{r loadData, echo=F, message=F, warning=F, cache=T}
+setwd('N:/Bryan/TextAnalytics')
+dataURL <- 'ClaimsWithNotes.csv'
+
+# read the files from csv
+textDf <- read.csv('ClaimsWithNotes.csv', stringsAsFactors = F)
+
+
+# use this theme for any ggplots
+theme_bryan <- function () { 
+  theme(axis.text.x = element_text(size = 8, color = 'blue', angle = 90),
+        legend.position = 'right',
+        axis.text.y = element_text(color = 'blue'),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        strip.text.x = element_text(size = 10, face = 'bold'),
+        strip.background = element_rect(fill = 'light blue'))
+}
+```
+
+
+
+## Reduce the Data Set
+```{r reduce, echo=T, message=F, warning=F, cache=T}
+
+# Get the feature and text
+textData <- textDf %>% dplyr::select(LLFeature,CLM_NOTE)
+
+# Remove NA
+# removes 7 claim notes
+textData <- na.omit(textData)
+
+# split the data
+llDf <- textData %>% dplyr::filter(LLFeature == 1)
+slDf <- textData %>% dplyr::filter(LLFeature == 0)
+
+# suffle the groups
+sldfShuffle <- slDf[sample(nrow(slDf)),]
+lldfShuffle <- llDf[sample(nrow(llDf)),]
+
+
+# only grab a portion of notes
+lldfShuffle <-  lldfShuffle[c(1:25000),c(1,2)]
+nondfShuffle <- sldfShuffle[c(1:25000),c(1,2)]
+
+# rebind them back
+textData <- rbind(lldfShuffle,nondfShuffle)
+
+```
+
+
+
+
+
+## Preliminary Cleaning
+```{r cleanText, echo=T, message=F, warning=F, cache=T}
+# First step in Processing
+textData$CLM_NOTE <- tolower(textData$CLM_NOTE)
+newWords <- stopwords("english")
+keep <- c("no", "more", "not", "can't", "cannot", "isn't", "aren't", "wasn't",
+          "weren't", "hasn't", "haven't", "hadn't", "doesn't", "don't", "didn't", "won't")
+newWords <- newWords [! newWords %in% keep]
+
+otherWords <- c("will", "call", "called", "need", "received", "sent", "left", 
+                "message", "-")
+
+names <- names <- c('gonzalez mario',
+                    'gregory prusak',
+                    'wayne maldonado',
+                    'mary andrews')
+
+# clean up the words from hidden chars and convert to ascii
+# cleanData$CLM_NOTE <- iconv(cleanData$CLM_NOTE, from = "utf-8", to = 'ASCII//TRANSLIT')
+textData$CLM_NOTE <- stringi::stri_trans_general(textData$CLM_NOTE, "latin-ascii")
+
+# perform some substitutions
+recd <- function (x) {gsub("rec'd|recvd|recd", "received", x)}
+attorney <- function (x) {gsub("atty", "attorney", x)}
+clmnt <- function (x) {gsub("clmt|cmlt", "claimant", x)}
+repX <- function(x) {gsub("x{3,}", " ", x)}
+repA <- function(x) {gsub("a{2,}", " ", x)}
+repC <- function(x) {gsub("c{3,}", " ", x)}
+smallWds <- function(x) {rm_nchar_words(x, "1,3")}
+wordsNumbers <- function(x) {gsub("[^[:alnum:][:blank:]']", " ", x)}
+
+
+# for all data 
+clm <- VCorpus(VectorSource(textData$CLM_NOTE))
+clm <- tm_map(clm,PlainTextDocument)
+clm <- tm_map(clm, removeWords, newWords)
+clm <- tm_map(clm, removeWords, otherWords)
+clm <- tm_map(clm, removeWords, names)
+clm <- tm_map(clm, removePunctuation)
+clm <- tm_map(clm, removeNumbers)
+clm <- tm_map(clm, content_transformer(wordsNumbers))
+clm <- tm_map(clm, content_transformer(recd))
+clm <- tm_map(clm, content_transformer(attorney))
+clm <- tm_map(clm, content_transformer(clmnt))
+
+clm <- tm_map(clm, content_transformer(repX))
+clm <- tm_map(clm, content_transformer(repA))
+clm <- tm_map(clm, content_transformer(repC))
+clm <- tm_map(clm, content_transformer(smallWds))
+
+clm <- tm_map(clm, stripWhitespace)
+```
+
+
+
+
+```{r tokenize, echo=T, message=F, warning=F, cache=T}
+# make the tokenizer
+tokens <- 2
+MygramTokenizer <- function(x) {NGramTokenizer(x, Weka_control(min = tokens, max = tokens))}
+
+# make the DTM
+dtm <- DocumentTermMatrix(clm,control = list(tokenize = MygramTokenizer))
+
+
+dtmRed = removeSparseTerms(dtm, 0.999)
+dataset = as.data.frame(as.matrix(dtmRed))
+dataset$LL = textData$LLFeature
+
+# Encoding the target feature as factor
+dataset$LL <- ifelse(dataset$LL==1,'LL','notLL')
+dataset$LL <- as.factor(dataset$LL)
+```
+
+
+
+## Prep for NLP - Machine Learning
+```{r phraseModel, echo=T, message=F, warning=F, fig.height=10, fig.width=12}
+set.seed(123)
+split = sample.split(dataset$LL, SplitRatio = 0.8)
+training_set = subset(dataset, split == TRUE)
+test_set = subset(dataset, split == FALSE)
+
+# set up model
+`%notin%` <- function(x,y) !(x %in% y)
+allNames <- names(dataset)
+outcomeName <- "LL"
+predictorNames <- allNames[allNames %notin% outcomeName]
+```
+
+
+
+## Naive Bayes
+### - Very common model used with text
+### - Specify the model using e1071 package
+### - Variable importance plots are conditional probabilities
+```{r naive_bayes, echo=T, message=F, warning=F, fig.height=10, fig.width=12}
+# Specify the model using e1071 package
+outcome <- training_set$LL
+actual <- test_set$LL
+objModel <- e1071::naiveBayes(outcome ~ ., data = training_set, laplace = 1)
+
+# Raw classes - actually yields conditional probabilities
+predictions <- predict(object = objModel, test_set, type = 'raw')
+
+# get the AUC Use the Raw Predictions
+auc <- roc(ifelse(as.character(actual)=='LL',1,0),predictions[,2])
+print(auc$auc)
+
+# Confusion matrix
+confusionMatrix(predict(object = objModel, test_set),
+                actual)
+
+# Unlist the tables
+condProbs <- unlist(objModel$tables)
+condProbDF <- data.frame(Prob=as.numeric(unlist(condProbs)),
+                         Terms = names(unlist(condProbs)))
+head(condProbDF)
+
+
+# Likelihood of the word, given a large loss
+wordGivenLL <- condProbDF %>% 
+  dplyr::mutate(CleanTerms = sub('2','',Terms)) %>%
+  dplyr::arrange(desc(Prob)) %>%
+  dplyr::filter(grepl('2', Terms))
+
+# Likelihood of the word, given not a large loss
+wordGivenNotLL <- condProbDF %>% 
+  dplyr::mutate(CleanTerms = sub('3','',Terms)) %>%
+  dplyr::arrange(desc(Prob)) %>%
+  dplyr::filter(grepl('3', Terms))
+
+
+# Plots contributing to large loss
+wordRed <- wordGivenLL %>% filter(Prob > .02)
+wordP <- ggplot(wordRed, aes(y = Prob, x = reorder(CleanTerms, Prob))) + 
+  geom_col(position = 'stack', color = 'white', fill = 'dark green') +
+  coord_flip() + 
+  ggtitle('Words most likely to show up in Large Losses') + 
+  ylab('Conditional Prob of Word Given a Large Loss') +
+  xlab('') + 
+  theme_bryan()
+wordP
+
+
+# Make plots contributing to not large losses
+wordNotRed <- wordGivenNotLL %>% filter(Prob > .15)
+wordP <- ggplot(wordNotRed, aes(y = Prob, x = reorder(CleanTerms, Prob))) + 
+  geom_col(position = 'stack', color = 'white', fill = 'dark green') +
+  coord_flip() + 
+  ggtitle('Words most likely to show up in non Large Losses') + 
+  ylab('Conditional Prob of Word Given it was not a Large Loss') +
+  xlab('') + 
+  theme_bryan()
+wordP
+```

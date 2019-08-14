@@ -1,0 +1,492 @@
+---
+title: "Claim Notes Analytics"
+author: ""
+date: ""
+output:
+  html_document:
+    toc: false
+    toc_depth: 1
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, cache.lazy = FALSE)
+```
+
+
+
+# <strong>Text Mining & Visualization Part 2</strong> {.tabset .tabset-fade .tabset-pills}
+
+## Claim Notes Part 2
+### Word Correlations from Word Clouds
+#### - Correlation is calculated from the DTM
+```{r loadLibraries, echo=F, warning=FALSE, message=FALSE, cache = F, tidy=T}
+
+library(ggplot2)
+library(reshape2)
+library(scales)
+library(SnowballC)          # Porter's word stemming
+library(tm)                 # Text Cleaning and Processing
+library(RTextTools)         # Automatic Text Classification via Supervised Learning
+library(stringi)            # For processing strings
+library(wordcloud)          # Plot word clouds
+library(RWeka)              # Machine Learning Java Library for Tokenization
+library(tidytext)           # Additional Text Processing Library (new from RStudio)
+library(tidyr)              
+library(knitr)
+library(dendextend)         # Making Dendograms
+library(dendextendRcpp)     # Supporting package for dendextend
+library(qdapRegex)          # function to remove words less than 3 letters
+
+# Modeling Libraries
+library(caret)
+library(Metrics)
+library(pROC)
+library(naivebayes)         # Naive Bayes package
+library(klaR)               # Alternative NB package
+library(e1071)              # Windows specific modeling package best NB package
+library(caTools)            # Utility function to help modeling split
+library(randomForest)
+
+# Manipulating Data
+library(dplyr)
+
+```
+
+<style>
+  .main-container {
+    max-width: 1200px !important;
+    margin-left: auto;
+    margin-right: auto;
+  }
+</style>
+
+
+```{r loadData, echo=F, message=F, warning=F, cache=T}
+setwd('N:/Bryan/TextAnalytics')
+dataURL <- 'ClaimsWithNotes.csv'
+
+# read the files from csv
+textDf <- read.csv('ClaimsWithNotes.csv', stringsAsFactors = F)
+
+
+# use this theme for any ggplots
+theme_bryan <- function () { 
+  theme(axis.text.x = element_text(size = 8, color = 'blue', angle = 90),
+        legend.position = 'right',
+        axis.text.y = element_text(color = 'blue'),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        strip.text.x = element_text(size = 10, face = 'bold'),
+        strip.background = element_rect(fill = 'light blue'))
+}
+```
+
+
+
+```{r cleanText, echo=F, message=F, warning=F, cache=T}
+
+# clean up the data types
+textDf$NOTE_DT <- as.Date(textDf$NOTE_DT)
+textDf$CLM_RPTD_DT <- as.Date(textDf$CLM_RPTD_DT)
+
+textDf$Generation <- as.factor(ifelse(textDf$Boomer == 1, 'Boomer', 
+                            ifelse(textDf$GenX == 1,'GenX',
+                                   ifelse(textDf$Millennials == 1, 'Millennials',
+                                          ifelse(textDf$GenZ == 1, 'GenZ', 'Unk')))))
+
+textDf$AccdntState <- as.factor(textDf$AccdntState)
+textDf$CLM_RPTD_YEAR <- as.factor(textDf$CLM_RPTD_YEAR)
+
+# Get the feature and text
+textData <- textDf %>% dplyr::select(CLM_NOTE, 
+                                   LLFeature, 
+                                   Generation,
+                                   CLM_RPTD_YEAR,
+                                   AccdntState
+                                   )
+
+# Remove NA
+# removes 7 claim notes
+textData <- na.omit(textData)
+
+# First step in Processing
+textData$CLM_NOTE <- tolower(textData$CLM_NOTE)
+
+# remove the 'na', 'n/a' using a grob vs text substitution
+# this is like a regex
+# may not be needed, might be just in the text
+#grx <- glob2rx('*na*|*n/a*')
+#cleanData <- subset(textData, subset = !grepl(grx, textData$CLM_NOTE))
+
+# adjust the stopwords so that ngatives are included
+# create revised stopwords list to include some key words in keep
+newWords <- stopwords("english")
+keep <- c("no", "more", "not", "can't", "cannot", "isn't", "aren't", "wasn't",
+          "weren't", "hasn't", "haven't", "hadn't", "doesn't", "don't", "didn't", "won't")
+newWords <- newWords [! newWords %in% keep]
+
+otherWords <- c("will", "call", "called", "need", "received", "sent", "left", 
+                "message", "-")
+
+names <- names <- c('gonzalez mario',
+           'gregory prusak',
+           'wayne maldonado',
+           'mary andrews')
+
+# clean up the words from hidden chars and convert to ascii
+# cleanData$CLM_NOTE <- iconv(cleanData$CLM_NOTE, from = "utf-8", to = 'ASCII//TRANSLIT')
+textData$CLM_NOTE <- stringi::stri_trans_general(textData$CLM_NOTE, "latin-ascii")
+
+# make the large loss and small loss dataframes
+# put them in a list for processing
+llDf <- textData %>% filter(LLFeature == 1)
+slDf <- textData %>% filter(LLFeature == 0)
+```
+
+
+## Large Loss Data Components
+```{r lldataview, echo=T, message=F, warning=F, cache=T}
+table(llDf$AccdntState, llDf$CLM_RPTD_YEAR)
+```
+
+
+
+## non-Large Loss Data Components
+```{r sldataview, echo=T, message=F, warning=F, cache=T}
+table(slDf$AccdntState, slDf$CLM_RPTD_YEAR)
+```
+
+
+
+```{r processText, echo=F, message=F, warning=F, cache=T}
+# create functions for text processing
+# perform some substitutions
+recd <- function (x) {gsub("rec'd|recvd|recd", "received", x)}
+attorney <- function (x) {gsub("atty", "attorney", x)}
+clmnt <- function (x) {gsub("clmt|cmlt", "claimant", x)}
+repX <- function(x) {gsub("x{3,}", " ", x)}
+repA <- function(x) {gsub("a{2,}", " ", x)}
+repC <- function(x) {gsub("c{3,}", " ", x)}
+smallWds <- function(x) {rm_nchar_words(x, "1,3")}
+wordsNumbers <- function(x) {gsub("[^[:alnum:][:blank:]']", " ", x)}
+
+
+# for large losses 
+clm <- VCorpus(VectorSource(llDf$CLM_NOTE))
+clm <- tm_map(clm,PlainTextDocument)
+clm <- tm_map(clm, removeWords, newWords)
+clm <- tm_map(clm, removeWords, otherWords)
+clm <- tm_map(clm, removeWords, names)
+clm <- tm_map(clm, removePunctuation)
+clm <- tm_map(clm, removeNumbers)
+clm <- tm_map(clm, content_transformer(wordsNumbers))
+clm <- tm_map(clm, content_transformer(recd))
+clm <- tm_map(clm, content_transformer(attorney))
+clm <- tm_map(clm, content_transformer(clmnt))
+
+clm <- tm_map(clm, content_transformer(repX))
+clm <- tm_map(clm, content_transformer(repA))
+clm <- tm_map(clm, content_transformer(repC))
+clm <- tm_map(clm, content_transformer(smallWds))
+
+clm <- tm_map(clm, stripWhitespace)
+
+cleanLLText <- clm
+
+
+tokens <- 2
+MygramTokenizer <- function(x) {NGramTokenizer(x, Weka_control(min = tokens, max = tokens))}
+
+# make the weighted llTDM
+llDTM <- DocumentTermMatrix(cleanLLText,
+                            control = 
+                              list(weighting = function(x) 
+                              weightTfIdf(x, normalize = FALSE),
+                            bounds=list(global=c(5,Inf)),  
+                            tokenize = MygramTokenizer))
+
+
+
+
+
+```
+
+
+
+```{r plot_sl, echo=F, message=F, warning=F, fig.height=10, fig.width=12, cache=T}
+clm <- VCorpus(VectorSource(slDf$CLM_NOTE))
+clm <- tm_map(clm,PlainTextDocument)
+clm <- tm_map(clm, removeWords, newWords)
+clm <- tm_map(clm, removeWords, otherWords)
+clm <- tm_map(clm, removeWords, names)
+clm <- tm_map(clm, removePunctuation)
+clm <- tm_map(clm, removeNumbers)
+clm <- tm_map(clm, content_transformer(wordsNumbers))
+clm <- tm_map(clm, content_transformer(recd))
+clm <- tm_map(clm, content_transformer(attorney))
+clm <- tm_map(clm, content_transformer(clmnt))
+
+clm <- tm_map(clm, content_transformer(repX))
+clm <- tm_map(clm, content_transformer(repA))
+clm <- tm_map(clm, content_transformer(repC))
+clm <- tm_map(clm, content_transformer(smallWds))
+
+clm <- tm_map(clm, stripWhitespace)
+
+
+# transfer cleaned data to a new object
+cleanSLText <- clm
+
+# make the weighted slTDM
+slDTM <- DocumentTermMatrix(cleanSLText,
+                            control = 
+                              list(weighting = function(x) 
+                              weightTfIdf(x, normalize = FALSE),
+                            bounds=list(global=c(10,Inf)),
+                            tokenize = MygramTokenizer))
+
+
+```
+
+
+## LL Word Associations - 'back pain'
+```{r ll_back_pain, echo=T, message=F, warning=F, fig.height=12, fig.width=12, cache=T}
+# use the llDTM
+keyTerm <- "back pain"
+wordAssoc <- findAssocs(llDTM, keyTerm, .20)
+
+# Convert to a dataframe
+wordAssocDF <- data.frame(Corr=as.numeric(unlist(wordAssoc)),
+                          Terms = gsub(paste(keyTerm,'.', sep = ''),'',names(unlist(wordAssoc))))
+
+head(wordAssocDF)
+
+wordAssocPlot <- head(wordAssocDF,50)
+
+# Plot it
+wordP <- ggplot(wordAssocPlot, aes(y = Corr, x = reorder(Terms, Corr))) + 
+  geom_col(position = 'stack', color = 'white', fill = 'dark green') +
+  coord_flip() + 
+  ggtitle(paste("Phrases that are Correlated with", keyTerm)) + 
+            xlab("Correlation of Terms") +
+            ylab("Terms (Most Frequent at Top)") + 
+            theme_bryan()
+
+wordP
+```
+
+
+
+## LL Word Associations - 'claimant attorney'
+```{r claimant_attorney, echo=T, message=F, warning=F, fig.height=15, fig.width=12, cache=T}
+
+###############################################
+keyTerm <- "claimant attorney"
+wordAssoc <- findAssocs(llDTM, keyTerm, .10)
+
+# Convert to a dataframe
+wordAssocDF <- data.frame(Corr=as.numeric(unlist(wordAssoc)),
+                          Terms = gsub(paste(keyTerm,'.', sep = ''),'',names(unlist(wordAssoc))))
+
+head(wordAssocDF)
+
+wordAssocPlot <- head(wordAssocDF,50)
+
+# Plot it
+wordP <- ggplot(wordAssocPlot, aes(y = Corr, x = reorder(Terms, Corr))) + 
+  geom_col(position = 'stack', color = 'white', fill = 'dark green') +
+  coord_flip() + 
+  ggtitle(paste("Phrases that are Correlated with", keyTerm)) + 
+  xlab("Correlation of Terms") +
+  ylab("Terms (Most Frequent at Top)") + 
+  theme_bryan()
+
+wordP
+```
+
+
+## LL Word Associations - 'medical records'
+```{r medical_records, echo=T, message=F, warning=F, fig.height=10, fig.width=12, cache=T}
+###############################################
+keyTerm <- "medical records"
+wordAssoc <- findAssocs(llDTM, keyTerm, .12)
+
+# Convert to a dataframe
+wordAssocDF <- data.frame(Corr=as.numeric(unlist(wordAssoc)),
+                          Terms = gsub(paste(keyTerm,'.', sep = ''),'',names(unlist(wordAssoc))))
+
+head(wordAssocDF)
+
+# Plot it
+wordP <- ggplot(wordAssocDF, aes(y = Corr, x = reorder(Terms, Corr))) + 
+  geom_col(position = 'stack', color = 'white', fill = 'dark green') +
+  coord_flip() + 
+  ggtitle(paste("Phrases that are correlated with", keyTerm)) + 
+            xlab("Correlation of Terms") +
+            ylab("Terms (Most Frequent at Top)") + 
+            theme_bryan()
+
+wordP
+```
+
+
+## LL Word Associations - 'stop sign'
+```{r stop_sign, echo=T, message=F, warning=F, fig.height=10, fig.width=12, cache=T}
+###############################################
+keyTerm <- "stop sign"
+wordAssoc <- findAssocs(llDTM, keyTerm, .16)
+
+# Convert to a dataframe
+wordAssocDF <- data.frame(Corr=as.numeric(unlist(wordAssoc)),
+                          Terms = gsub(paste(keyTerm,'.', sep = ''),'',names(unlist(wordAssoc))))
+
+head(wordAssocDF)
+
+# Plot it
+wordP <- ggplot(wordAssocDF, aes(y = Corr, x = reorder(Terms, Corr))) + 
+  geom_col(position = 'stack', color = 'white', fill = 'dark green') +
+  coord_flip() + 
+  ggtitle(paste("Phrases that are correlated with", keyTerm)) + 
+            xlab("Correlation of Terms") +
+            ylab("Terms (Most Frequent at Top)") + 
+            theme_bryan()
+
+wordP
+```
+
+
+## LL Word Associations - 'police report'
+```{r police_report, echo=T, message=F, warning=F, fig.height=15, fig.width=12, cache=T}
+###############################################
+keyTerm <- "police report"
+wordAssoc <- findAssocs(llDTM, keyTerm, .18)
+
+# Convert to a dataframe
+wordAssocDF <- data.frame(Corr=as.numeric(unlist(wordAssoc)),
+                          Terms = gsub(paste(keyTerm,'.', sep = ''),'',names(unlist(wordAssoc))))
+
+head(wordAssocDF)
+
+# Plot it
+wordP <- ggplot(wordAssocDF, aes(y = Corr, x = reorder(Terms, Corr))) + 
+  geom_col(position = 'stack', color = 'white', fill = 'dark green') +
+  coord_flip() + 
+  ggtitle(paste("Phrases that are correlated with", keyTerm)) + 
+            xlab("Correlation of Terms") +
+            ylab("Terms (Most Frequent at Top)") + 
+            theme_bryan()
+
+wordP
+
+```
+
+
+## non-LL Word Associations - 'total loss'
+```{r total_loss, echo=T, cache=T, message=F, warning=F, fig.height=15, fig.width=12}
+# use the slDTM
+############################################
+keyTerm <- "total loss"
+wordAssoc <- findAssocs(slDTM, keyTerm, .24)
+
+# Convert to a dataframe
+wordAssocDF <- data.frame(Corr=as.numeric(unlist(wordAssoc)),
+                          Terms = gsub(paste(keyTerm,'.', sep = ''),'',names(unlist(wordAssoc))))
+
+
+# Plot it
+wordP <- ggplot(wordAssocDF, aes(y = Corr, x = reorder(Terms, Corr))) + 
+  geom_col(position = 'stack', color = 'white', fill = 'dark green') +
+  coord_flip() + 
+  # shape = 23, size = 3, fill = 'white'
+  ggtitle(paste("Phrases that are correlated with", keyTerm)) + 
+            xlab("Correlation of Terms") +
+            ylab("Terms (Most Frequent at Top)") + 
+            theme_bryan()
+
+wordP
+```
+
+
+
+## non-LL Word Associations - 'back pain'
+```{r back_pain, echo=T, cache=T, message=F, warning=F, fig.height=10, fig.width=12}
+############################################
+keyTerm <- "back pain"
+wordAssoc <- findAssocs(slDTM, keyTerm, .17)
+
+# Convert to a dataframe
+wordAssocDF <- data.frame(Corr=as.numeric(unlist(wordAssoc)),
+                          Terms = gsub(paste(keyTerm,'.', sep = ''),'',names(unlist(wordAssoc))))
+
+
+# Plot it
+wordP <- ggplot(wordAssocDF, aes(y = Corr, x = reorder(Terms, Corr))) + 
+  geom_col(position = 'stack', color = 'white', fill = 'dark green') +
+  coord_flip() + 
+  # shape = 23, size = 3, fill = 'white'
+  ggtitle(paste("Phrases that are correlated with", keyTerm)) + 
+            xlab("Correlation of Terms") +
+            ylab("Terms (Most Frequent at Top)") + 
+            theme_bryan()
+
+wordP
+```
+
+
+
+## non-LL Word Associations - 'coverage issues'
+```{r coverage_issues, echo=T, cache=T, message=F, warning=F, fig.height=10, fig.width=12}
+############################################
+### Words Correlated with at least .15
+keyTerm <- "coverage issues"
+wordAssoc <- findAssocs(slDTM, keyTerm, .17)
+
+# Convert to a dataframe
+wordAssocDF <- data.frame(Corr=as.numeric(unlist(wordAssoc)),
+                          Terms = gsub(paste(keyTerm,'.', sep = ''),'',names(unlist(wordAssoc))))
+
+
+# Plot it
+wordP <- ggplot(wordAssocDF, aes(y = Corr, x = reorder(Terms, Corr))) + 
+  geom_col(position = 'stack', color = 'white', fill = 'dark green') +
+  coord_flip() + 
+  # shape = 23, size = 3, fill = 'white'
+  ggtitle(paste("Phrases that are correlated with", keyTerm)) + 
+            xlab("Correlation of Terms") +
+            ylab("Terms (Most Frequent at Top)") + 
+            theme_bryan()
+
+wordP
+```
+
+
+
+## non-LL Word Associations - 'wage loss'
+```{r wage_loss, echo=T, cache=T, message=F, warning=F, fig.height=10, fig.width=12}
+############################################
+### Words Correlated with at least .15
+keyTerm <- "wage loss"
+wordAssoc <- findAssocs(slDTM, keyTerm, .17)
+
+# Convert to a dataframe
+wordAssocDF <- data.frame(Corr=as.numeric(unlist(wordAssoc)),
+                          Terms = gsub(paste(keyTerm,'.', sep = ''),'',names(unlist(wordAssoc))))
+
+
+# Plot it
+wordP <- ggplot(wordAssocDF, aes(y = Corr, x = reorder(Terms, Corr))) + 
+  geom_col(position = 'stack', color = 'white', fill = 'dark green') +
+  coord_flip() + 
+  # shape = 23, size = 3, fill = 'white'
+  ggtitle(paste("Phrases that are correlated with", keyTerm)) + 
+            xlab("Correlation of Terms") +
+            ylab("Terms (Most Frequent at Top)") + 
+            theme_bryan()
+
+wordP
+```
+
+
+
+
+

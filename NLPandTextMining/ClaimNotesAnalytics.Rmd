@@ -1,0 +1,738 @@
+---
+title: "Claim Notes Part 1"
+author: ""
+date: ""
+output:
+  html_document:
+    toc: false
+    toc_depth: 1
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, cache.lazy = FALSE)
+```
+
+
+# <strong>Text Mining & Visualization</strong> {.tabset .tabset-fade .tabset-pills}
+
+
+## Text Analytics & Natural Language Processing
+### Generally Consists of Three Phases
+### * Text analytics and visualization
+####   - Consists of theming, keyword(key phrase) searching, tokenization and visualization
+### * Predictive modeling with text as the independent variables (NLP)
+####   - Can employ deep learning models or traditional 'bag of words' models
+####   - Clustering and topic modeling using Latent Semantic Analysis (LSA)
+### * Chatbots and AI
+
+
+## Requires Specialized Libraries
+### Not all are used here, but this is a good list
+### Additional supporting libraries for modeling
+### Order of library loading matters due to overlap and masking
+```{r loadLibraries, echo=T, warning=FALSE, message=FALSE, cache = F, tidy=T}
+
+library(ggplot2)
+library(reshape2)
+library(scales)
+library(SnowballC)          # Porter's word stemming
+library(tm)                 # Text Cleaning and Processing
+library(RTextTools)         # Automatic Text Classification via Supervised Learning
+library(stringi)            # For processing strings
+library(wordcloud)          # Plot word clouds
+library(RWeka)              # Machine Learning Java Library for Tokenization
+library(tidytext)           # Additional Text Processing Library (new from RStudio)
+library(tidyr)              
+library(knitr)
+library(dendextend)         # Making Dendograms
+library(dendextendRcpp)     # Supporting package for dendextend
+library(qdapRegex)          # function to remove words less than 3 letters
+
+# Modeling Libraries
+library(caret)
+library(Metrics)
+library(pROC)
+library(naivebayes)         # Naive Bayes package
+library(klaR)               # Alternative NB package
+library(e1071)              # Windows specific modeling package best NB package
+library(caTools)            # Utility function to help modeling split
+library(randomForest)
+
+# Manipulating Data
+library(dplyr)
+
+```
+
+<style>
+  .main-container {
+    max-width: 1200px !important;
+    margin-left: auto;
+    margin-right: auto;
+  }
+</style>
+
+```{r loadData, echo=F, message=F, warning=F, cache=T}
+setwd('N:/Bryan/TextAnalytics')
+dataURL <- 'ClaimsWithNotes.csv'
+
+# read the files from csv
+textDf <- read.csv('ClaimsWithNotes.csv', stringsAsFactors = F)
+
+
+# use this theme for any ggplots
+theme_bryan <- function () { 
+  theme(axis.text.x = element_text(size = 8, color = 'blue', angle = 90),
+        legend.position = 'right',
+        axis.text.y = element_text(color = 'blue'),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        strip.text.x = element_text(size = 10, face = 'bold'),
+        strip.background = element_rect(fill = 'light blue'))
+}
+```
+
+
+## Preliminary Cleaning
+```{r cleanText, echo=T, message=F, warning=F, cache=T}
+
+# clean up the data types
+textDf$NOTE_DT <- as.Date(textDf$NOTE_DT)
+textDf$CLM_RPTD_DT <- as.Date(textDf$CLM_RPTD_DT)
+
+textDf$Generation <- as.factor(ifelse(textDf$Boomer == 1, 'Boomer', 
+                            ifelse(textDf$GenX == 1,'GenX',
+                                   ifelse(textDf$Millennials == 1, 'Millennials',
+                                          ifelse(textDf$GenZ == 1, 'GenZ', 'Unk')))))
+
+textDf$AccdntState <- as.factor(textDf$AccdntState)
+textDf$CLM_RPTD_YEAR <- as.factor(textDf$CLM_RPTD_YEAR)
+
+# Get the feature and text
+textData <- textDf %>% dplyr::select(CLM_NOTE, 
+                                   LLFeature, 
+                                   Generation,
+                                   CLM_RPTD_YEAR,
+                                   AccdntState
+                                   )
+
+# Remove NA
+# removes 7 claim notes
+textData <- na.omit(textData)
+
+# First step in Processing
+textData$CLM_NOTE <- tolower(textData$CLM_NOTE)
+
+# remove the 'na', 'n/a' using a grob vs text substitution
+# this is like a regex
+# may not be needed, might be just in the text
+#grx <- glob2rx('*na*|*n/a*')
+#cleanData <- subset(textData, subset = !grepl(grx, textData$CLM_NOTE))
+
+# adjust the stopwords so that ngatives are included
+# create revised stopwords list to include some key words in keep
+newWords <- stopwords("english")
+keep <- c("no", "more", "not", "can't", "cannot", "isn't", "aren't", "wasn't",
+          "weren't", "hasn't", "haven't", "hadn't", "doesn't", "don't", "didn't", "won't")
+newWords <- newWords [! newWords %in% keep]
+
+otherWords <- c("will", "call", "called", "need", "received", "sent", "left", 
+                "message", "-")
+
+names <- names <- c('gonzalez mario',
+           'gregory prusak',
+           'wayne maldonado',
+           'mary andrews')
+
+# clean up the words from hidden chars and convert to ascii
+# cleanData$CLM_NOTE <- iconv(cleanData$CLM_NOTE, from = "utf-8", to = 'ASCII//TRANSLIT')
+textData$CLM_NOTE <- stringi::stri_trans_general(textData$CLM_NOTE, "latin-ascii")
+
+# make the large loss and small loss dataframes
+# put them in a list for processing
+llDf <- textData %>% filter(LLFeature == 1)
+slDf <- textData %>% filter(LLFeature == 0)
+
+```
+
+
+## Standard Pre-processing and Tokenizing
+```{r processText, echo=T, message=F, warning=F, cache=F}
+# create functions for text processing
+# perform some substitutions
+recd <- function (x) {gsub("rec'd|recvd|recd", "received", x)}
+attorney <- function (x) {gsub("atty", "attorney", x)}
+clmnt <- function (x) {gsub("clmt|cmlt", "claimant", x)}
+repX <- function(x) {gsub("x{3,}", " ", x)}
+repA <- function(x) {gsub("a{2,}", " ", x)}
+repC <- function(x) {gsub("c{3,}", " ", x)}
+smallWds <- function(x) {rm_nchar_words(x, "1,3")}
+wordsNumbers <- function(x) {gsub("[^[:alnum:][:blank:]']", " ", x)}
+
+
+# for large losses 
+clm <- VCorpus(VectorSource(llDf$CLM_NOTE))
+clm <- tm_map(clm,PlainTextDocument)
+clm <- tm_map(clm, removeWords, newWords)
+clm <- tm_map(clm, removeWords, otherWords)
+clm <- tm_map(clm, removeWords, names)
+clm <- tm_map(clm, removePunctuation)
+clm <- tm_map(clm, removeNumbers)
+clm <- tm_map(clm, content_transformer(wordsNumbers))
+clm <- tm_map(clm, content_transformer(recd))
+clm <- tm_map(clm, content_transformer(attorney))
+clm <- tm_map(clm, content_transformer(clmnt))
+
+clm <- tm_map(clm, content_transformer(repX))
+clm <- tm_map(clm, content_transformer(repA))
+clm <- tm_map(clm, content_transformer(repC))
+clm <- tm_map(clm, content_transformer(smallWds))
+
+clm <- tm_map(clm, stripWhitespace)
+
+cleanLLText <- clm
+
+
+tokens <- 2
+MygramTokenizer <- function(x) {NGramTokenizer(x, Weka_control(min = tokens, max = tokens))}
+
+# make the TDM
+TDM <- TermDocumentMatrix(cleanLLText, 
+                          control = list(weighting = 
+                                        function(x) weightTfIdf(x, normalize = FALSE), 
+                                        tokenize = MygramTokenizer))
+
+```
+
+
+
+## Large Losses at Feature/Exposure Level
+```{r plotll, echo=T, message=F, warning=F, fig.height=10, fig.width=12, cache=T}
+
+# Sample of terms
+print(TDM$dimnames$Terms[1:200])
+
+
+
+tokenMatrix <- as.matrix(removeSparseTerms(x = TDM, sparse = .9995))
+# Sort it most frequent to least frequent and create a table
+tokenV <- sort(rowSums(tokenMatrix), decreasing = TRUE)
+token.d <- data.frame(word = names(tokenV), freq=tokenV)
+
+
+wordcloud(token.d$word, token.d$freq,scale=c(8,.2), min.freq = 1, max.words = 1000,
+          random.order = FALSE,rot.per=0.15, use.r.layout=FALSE,
+          colors = brewer.pal(8,"Dark2"))
+```
+
+
+
+## Non-Large Losses
+```{r plot_sl, echo=T, message=F, warning=F, fig.height=10, fig.width=12, cache=F}
+clm <- VCorpus(VectorSource(slDf$CLM_NOTE))
+clm <- tm_map(clm,PlainTextDocument)
+clm <- tm_map(clm, removeWords, newWords)
+clm <- tm_map(clm, removeWords, otherWords)
+clm <- tm_map(clm, removeWords, names)
+clm <- tm_map(clm, removePunctuation)
+clm <- tm_map(clm, removeNumbers)
+clm <- tm_map(clm, content_transformer(wordsNumbers))
+clm <- tm_map(clm, content_transformer(recd))
+clm <- tm_map(clm, content_transformer(attorney))
+clm <- tm_map(clm, content_transformer(clmnt))
+
+clm <- tm_map(clm, content_transformer(repX))
+clm <- tm_map(clm, content_transformer(repA))
+clm <- tm_map(clm, content_transformer(repC))
+clm <- tm_map(clm, content_transformer(smallWds))
+
+clm <- tm_map(clm, stripWhitespace)
+
+
+# transfer cleaned data to a new object
+cleanSLText <- clm
+
+
+tokens <- 2
+MygramTokenizer <- function(x) {NGramTokenizer(x, Weka_control(min = tokens, max = tokens))}
+
+# make the TDM
+TDM <- TermDocumentMatrix(cleanSLText, 
+                          control = list(weighting = 
+                                        function(x) weightTfIdf(x, normalize = FALSE), 
+                                        tokenize = MygramTokenizer))
+
+# Sample of terms
+print(TDM$dimnames$Terms[1:200])
+
+
+
+tokenMatrix <- as.matrix(removeSparseTerms(x = TDM, sparse = .9995))
+# Sort it most frequent to least frequent and create a table
+tokenV <- sort(rowSums(tokenMatrix), decreasing = TRUE)
+token.d <- data.frame(word = names(tokenV), freq=tokenV)
+
+
+wordcloud(token.d$word, token.d$freq,scale=c(8,.2), min.freq = 1, max.words = 1000,
+          random.order = FALSE,rot.per=0.15, use.r.layout=FALSE,
+          colors = brewer.pal(8,"Dark2"))
+```
+
+
+
+## Clusters Large Losses by State
+### Use a Document Term Matrix
+```{r clusterll, echo=T, warning=F, message=F, fig.height=8, fig.width=12, cache = T}
+
+# start with the large losses DTM
+# Preserves the Document Order to Attach Factors
+llDTM <- DocumentTermMatrix(cleanLLText)
+
+# Convert it to a data frame via matrix
+# Collapse it down to state
+llTextDF <- as.data.frame(as.matrix(removeSparseTerms(x = llDTM, sparse = .9995)))
+llTextDF$State <- as.factor(llDf$AccdntState)
+lldfState <- aggregate(llTextDF[,-length(llTextDF)], by = list(llTextDF$State), sum)
+
+# Remove sparse terms and columns by picking columns that sum to 5 or more
+# Setting the sum equal to a frequency for the entire set
+dfStateRed <- lldfState[,colSums(lldfState[,2:length(lldfState)]) > 5]
+rownames(dfStateRed) <- lldfState[,1]
+
+# Create a correlation matrix and make it a distance matrix
+words <- length(dfStateRed) 
+dis <- as.dist(1 - cov2cor(cov(dfStateRed[,c(2:words)], 
+                               method = "pearson", 
+                               use = "pairwise.complete.obs")))
+
+par(mar = c(3.5, .5, 3.5, 9))
+d <- dist(dfStateRed, method = "euclidean")
+hc <- hclust(d)
+dend <- d %>% hclust %>% as.dendrogram
+labels_cex(dend) <- 1.25
+dend %>% 
+  color_branches(k=10) %>%
+  color_labels() %>%
+  highlight_branches_lwd(4) %>% 
+  plot(horiz=TRUE, main = "LL Word Clusters by State", axes = T, xlim = c(3500,0))
+
+```
+
+
+
+## Clusters Non-Large Losses by State
+### Use a Document Term Matrix
+```{r clustersl, echo=T, warning=F, fig.height=10, fig.width=12, message=F, cache = T}
+#  Now small losses
+slDTM <- DocumentTermMatrix(cleanSLText)
+
+# Convert it to a data frame via matrix
+# Collapse it down to state
+slTextDF <- as.data.frame(as.matrix(removeSparseTerms(x = slDTM, sparse = .999)))
+slTextDF$State <- as.factor(slDf$AccdntState)
+sldfState <- aggregate(slTextDF[,-length(slTextDF)], by = list(slTextDF$State), sum)
+
+# Remove sparse terms and columns by picking columns that sum to 5 or more
+# Setting the sum equal to a frequency for the entire set
+dfStateRed <- sldfState[,colSums(sldfState[,2:length(sldfState)]) > 5]
+rownames(dfStateRed) <- sldfState[,1]
+
+
+# Create a correlation matrix and make it a distance matrix
+words <- length(dfStateRed) 
+dis <- as.dist(1 - cov2cor(cov(dfStateRed[,c(2:words)], 
+                               method = "pearson", 
+                               use = "pairwise.complete.obs")))
+
+
+par(mar = c(3.5, .5, 3.5, 9))
+d <- dist(dfStateRed, method = "euclidean")
+hc <- hclust(d)
+dend <- d %>% hclust %>% as.dendrogram
+labels_cex(dend) <- 1.25
+dend %>% 
+  color_branches(k=5) %>%
+  color_labels() %>%
+  highlight_branches_lwd(4) %>% 
+  plot(horiz=TRUE, main = "non-LL Word Clusters by State", axes = T, xlim = c(150000,0))
+```
+
+
+## Cluster Large Losses By Claim Reported Year
+```{r clusterllYr, echo=T, warning=F, message=F, fig.height=8, fig.width=12, cache = T}
+llDTM <- DocumentTermMatrix(cleanLLText)
+
+# Convert it to a data frame via matrix
+# Collapse it down to year
+llTextDF <- as.data.frame(as.matrix(removeSparseTerms(x = llDTM, sparse = .9995)))
+llTextDF$Year <- as.factor(llDf$CLM_RPTD_YEAR)
+lldfYear <- aggregate(llTextDF[,-length(llTextDF)], by = list(llTextDF$Year), sum)
+
+# Remove sparse terms and columns by picking columns that sum to 5 or more
+# Setting the sum equal to a frequency for the entire set
+dfYearRed <- lldfYear[,colSums(lldfYear[,2:length(lldfYear)]) > 5]
+rownames(dfYearRed) <- lldfYear[,1]
+
+# Create a correlation matrix and make it a distance matrix
+words <- length(dfYearRed) 
+dis <- as.dist(1 - cov2cor(cov(dfYearRed[,c(2:words)], 
+                               method = "pearson", 
+                               use = "pairwise.complete.obs")))
+
+par(mar = c(3.5, .5, 3.5, 9))
+d <- dist(dfYearRed, method = "euclidean")
+hc <- hclust(d)
+dend <- d %>% hclust %>% as.dendrogram
+labels_cex(dend) <- 1.25
+dend %>% 
+  color_branches(k=3) %>%
+  color_labels() %>%
+  highlight_branches_lwd(4) %>% 
+  plot(horiz=TRUE, main = "LL Word Clusters by Year", axes = T)
+
+```
+
+
+
+
+## Cluster Non Large Losses By Claim Reported Year
+```{r clusterSlYr, echo=T, warning=F, message=F, fig.height=8, fig.width=12, cache = T}
+slDTM <- DocumentTermMatrix(cleanSLText)
+
+# Convert it to a data frame via matrix
+# Collapse it down to region (9 obseravations)
+slTextDF <- as.data.frame(as.matrix(removeSparseTerms(x = slDTM, sparse = .999)))
+slTextDF$Year <- as.factor(slDf$CLM_RPTD_YEAR)
+sldfYear <- aggregate(slTextDF[,-length(slTextDF)], by = list(slTextDF$Year), sum)
+
+# Remove sparse terms and columns by picking columns that sum to 5 or more
+# Setting the sum equal to a frequency for the entire set
+dfYearRed <- sldfYear[,colSums(sldfYear[,2:length(sldfYear)]) > 5]
+rownames(dfYearRed) <- sldfYear[,1]
+
+# Create a correlation matrix and make it a distance matrix
+words <- length(dfYearRed) 
+dis <- as.dist(1 - cov2cor(cov(dfYearRed[,c(2:words)], 
+                               method = "pearson", 
+                               use = "pairwise.complete.obs")))
+
+par(mar = c(3.5, .5, 3.5, 9))
+d <- dist(dfYearRed, method = "euclidean")
+hc <- hclust(d)
+dend <- d %>% hclust %>% as.dendrogram
+labels_cex(dend) <- 1.25
+dend %>% 
+  color_branches(k=3) %>%
+  color_labels() %>%
+  highlight_branches_lwd(4) %>% 
+  plot(horiz=TRUE, main = "non-LL Word Clusters by Year", axes = T)
+
+```
+
+
+
+## Weighted Large Loss Terms By State
+### Use TF-IDF Weighting
+```{r weightedllterms, echo=T, warning=F, message=F, fig.height=8, fig.width=12, cache = T}
+llDTM <- DocumentTermMatrix(cleanLLText, control = list(weighting = 
+                                                    function(x)
+                                                    weightTfIdf(x, normalize = FALSE), 
+                                                    tokenize = MygramTokenizer))
+
+# Collapse it down
+llTextDF <- as.data.frame(as.matrix(removeSparseTerms(x = llDTM, sparse = .9995)))
+llTextDF$State <- as.factor(llDf$AccdntState)
+lldfState <- aggregate(llTextDF[,-length(llTextDF)], by = list(llTextDF$State), sum)
+colnames(lldfState)[colnames(lldfState) == 'Group.1'] <- 'State'
+
+# Melt the data
+meltState <- melt(lldfState, id = 'State',
+                 variable.name = 'Term',
+                 value.name = 'TFIDF')
+
+
+# head(meltState, 20)
+
+
+# remove gonazalez mario, gregory prusak, wayne maldonado, mary andrews 
+
+# Roll up the counts
+rollup <- meltState %>% group_by(Term, State) %>%
+  summarise(Total = sum(TFIDF))
+
+# head(rollup, 20)
+
+# Sort rollup by total
+rollup$Term <- as.character(rollup$Term)
+rollup <- rollup %>%
+  arrange(desc(Total), desc(nchar(Term)))
+
+names <- c('gonzalez mario',
+           'gregory prusak',
+           'wayne maldonado',
+           'mary andrews')
+
+# filter out names
+rollup <- rollup %>% filter(!(Term %in% names))
+
+
+rollupFilter <- rollup %>%
+  filter(Total > 100) %>%
+  group_by(Term) %>%
+  arrange(desc(Total))
+
+# Get first group
+toPlot <- head(rollupFilter,50)
+
+# Plot it
+g <- ggplot(toPlot, aes(x = Term, fill = State), y = Total) + coord_flip() + 
+  geom_bar() + facet_wrap(~State, nrow = 1) + 
+  theme_bryan() + scale_y_discrete(limits = c(0,1), expand = c(0,0)) + 
+  theme(axis.text.x = element_text(angle = 0), legend.position = 'none')
+g
+
+# make it ex-MA
+toPlotxMA <- rollupFilter %>% filter(State != 'MA')
+toPlotxMA <- head(toPlotxMA, 50)
+
+# Plot it
+g <- ggplot(toPlotxMA, aes(x = Term, fill = State), y = Total) + coord_flip() + 
+  geom_bar() + facet_wrap(~State, nrow = 1) + 
+  ggtitle("Weighted LL Term Distribution by State xMA") +
+  theme_bryan() + scale_y_discrete(limits = c(0,1), expand = c(0,0)) + 
+  theme(axis.text.x = element_text(angle = 0), legend.position = 'none')
+g
+
+
+```
+
+
+## Common Large Loss Terms By State
+### Use Count Vectorizer
+```{r commonllTerms, echo=T, warning=F, message=F, fig.height=8, fig.width=12, cache = T}
+llDTM <- DocumentTermMatrix(cleanLLText, control = list(tokenize = MygramTokenizer))
+
+# Collapse it down
+llTextDF <- as.data.frame(as.matrix(removeSparseTerms(x = llDTM, sparse = .9995)))
+llTextDF$State <- as.factor(llDf$AccdntState)
+lldfState <- aggregate(llTextDF[,-length(llTextDF)], by = list(llTextDF$State), sum)
+colnames(lldfState)[colnames(lldfState) == 'Group.1'] <- 'State'
+
+# Melt the data
+meltState <- melt(lldfState, id = 'State',
+                 variable.name = 'Term',
+                 value.name = 'Count')
+
+# Roll up the counts
+rollup <- meltState %>% group_by(Term, State) %>%
+  summarise(Total = sum(Count))
+
+# Sort rollup by total
+rollup$Term <- as.character(rollup$Term)
+rollup <- rollup %>%
+  arrange(desc(Total), desc(nchar(Term)))
+
+names <- c('gonzalez mario',
+           'gregory prusak',
+           'wayne maldonado',
+           'mary andrews')
+
+# filter out names
+rollup <- rollup %>% filter(!(Term %in% names))
+
+
+rollupFilter <- rollup %>%
+  filter(Total > 10) %>%
+  group_by(Term) %>%
+  arrange(desc(Total))
+
+# Get first 50
+toPlot <- head(rollupFilter,50)
+
+# Plot it
+g <- ggplot(toPlot, aes(x = Term, fill = State), y = Total) + coord_flip() + 
+  geom_bar() + facet_wrap(~State, nrow = 1) + 
+  ggtitle("Common LL Term Distribution by State") +
+  theme_bryan() + scale_y_discrete(limits = c(0,1), expand = c(0,0)) + 
+  theme(axis.text.x = element_text(angle = 0), legend.position = 'none')
+g
+
+
+# make it ex-MA
+toPlotxMA <- rollupFilter %>% filter(State != 'MA')
+toPlotxMA <- head(toPlotxMA, 50)
+
+# Plot it
+g <- ggplot(toPlotxMA, aes(x = Term, fill = State), y = Total) + coord_flip() + 
+  geom_bar() + facet_wrap(~State, nrow = 1) + 
+  ggtitle("Common LL Term Distribution by State xMA") +
+  theme_bryan() + scale_y_discrete(limits = c(0,1), expand = c(0,0)) + 
+  theme(axis.text.x = element_text(angle = 0), legend.position = 'none')
+g
+
+
+
+```
+
+
+
+## Weighted non-Large Loss Terms By State
+### Use TF-IDF Weighting
+```{r weightedSlterms, echo=T, warning=F, message=F, fig.height=8, fig.width=12, cache = T}
+slDTM <- DocumentTermMatrix(cleanSLText, control = list(weighting = 
+                                                        function(x) 
+                                                        weightTfIdf(x, normalize = FALSE), 
+                                                        tokenize = MygramTokenizer))
+
+# Collapse it down
+slTextDF <- as.data.frame(as.matrix(removeSparseTerms(x = slDTM, sparse = .999)))
+slTextDF$State <- as.factor(slDf$AccdntState)
+sldfState <- aggregate(slTextDF[,-length(slTextDF)], by = list(slTextDF$State), sum)
+colnames(sldfState)[colnames(sldfState) == 'Group.1'] <- 'State'
+
+# Melt the data
+meltState <- melt(sldfState, id = 'State',
+                  variable.name = 'Term',
+                  value.name = 'TFIDF')
+
+
+head(meltState, 20)
+
+
+# remove gonazalez mario, gregory prusak, wayne maldonado, mary andrews 
+
+# Roll up the counts
+rollup <- meltState %>% group_by(Term, State) %>%
+  summarise(Total = sum(TFIDF))
+
+head(rollup, 20)
+
+# Sort rollup by total
+rollup$Term <- as.character(rollup$Term)
+rollup <- rollup %>%
+  arrange(desc(Total), desc(nchar(Term)))
+
+names <- c('gonzalez mario',
+           'gregory prusak',
+           'wayne maldonado',
+           'mary andrews')
+
+# filter out names
+rollup <- rollup %>% filter(!(Term %in% names))
+
+
+# , desc(nchar(Term))
+
+rollupFilter <- rollup %>%
+  filter(Total > 100) %>%
+  group_by(Term) %>%
+  arrange(desc(Total))
+
+# Get first 50
+toPlot <- head(rollupFilter,50)
+
+# Plot it
+g <- ggplot(toPlot, aes(x = Term, fill = State), y = Total) + coord_flip() + 
+  geom_bar() + facet_wrap(~State, nrow = 1) + 
+  ggtitle("Weighted non-LL Term Distribution by State") +
+  theme_bryan() + scale_y_discrete(limits = c(0,1), expand = c(0,0)) + 
+  theme(axis.text.x = element_text(angle = 0), legend.position = 'none')
+g
+
+
+# make it ex-MA
+toPlotxMA <-rollupFilter %>% filter(State != 'MA')
+toPlotxMA <- head(toPlotxMA, 50)
+
+# Plot it
+g <- ggplot(toPlotxMA, aes(x = Term, fill = State), y = Total) + coord_flip() + 
+  geom_bar() + facet_wrap(~State, nrow = 1) + 
+  ggtitle("Weighted non-LL Term Distribution by State xMA") +
+  theme_bryan() + scale_y_discrete(limits = c(0,1), expand = c(0,0)) + 
+  theme(axis.text.x = element_text(angle = 0), legend.position = 'none')
+g
+
+
+```
+
+
+
+
+## Common non-Large Loss Terms By State
+### Use Count Vectorizer
+```{r commonSlterms, echo=T, warning=F, message=F, fig.height=10, fig.width=12, cache = F}
+slDTM <- DocumentTermMatrix(cleanSLText, control = list(tokenize = MygramTokenizer))
+
+# Collapse it down
+slTextDF <- as.data.frame(as.matrix(removeSparseTerms(x = slDTM, sparse = .999)))
+slTextDF$State <- as.factor(slDf$AccdntState)
+sldfState <- aggregate(slTextDF[,-length(slTextDF)], by = list(slTextDF$State), sum)
+colnames(sldfState)[colnames(sldfState) == 'Group.1'] <- 'State'
+
+# Melt the data
+meltState <- melt(sldfState, id = 'State',
+                  variable.name = 'Term',
+                  value.name = 'Count')
+
+
+head(meltState, 20)
+
+
+# remove gonazalez mario, gregory prusak, wayne maldonado, mary andrews 
+
+# Roll up the counts
+rollup <- meltState %>% group_by(Term, State) %>%
+  summarise(Total = sum(Count))
+
+head(rollup, 20)
+
+# Sort rollup by total
+rollup$Term <- as.character(rollup$Term)
+rollup <- rollup %>%
+  arrange(desc(Total), desc(nchar(Term)))
+
+names <- c('gonzalez mario',
+           'gregory prusak',
+           'wayne maldonado',
+           'mary andrews')
+
+# filter out names
+rollup <- rollup %>% filter(!(Term %in% names))
+
+
+rollupFilter <- rollup %>%
+  filter(Total > 10) %>%
+  group_by(Term) %>%
+  arrange(desc(Total))
+
+# Get first batch 
+toPlot <- head(rollupFilter,50)
+
+# Plot it
+g <- ggplot(toPlot, aes(x = Term, fill = State), y = Total) + coord_flip() + 
+  geom_bar() + facet_wrap(~State, nrow = 1) + 
+  ggtitle("Weighted non-LL Term Distribution by State") +
+  theme_bryan() + scale_y_discrete(limits = c(0,1), expand = c(0,0)) + 
+  theme(axis.text.x = element_text(angle = 0), legend.position = 'none')
+g
+
+
+
+# make it ex-MA
+toPlotxMA <-rollupFilter %>% filter(State != 'MA')
+toPlotxMA <- head(toPlotxMA, 50)
+
+# Plot it
+g <- ggplot(toPlotxMA, aes(x = Term, fill = State), y = Total) + coord_flip() + 
+  geom_bar() + facet_wrap(~State, nrow = 1) + 
+  ggtitle("Weighted non-LL Term Distribution by State xMA") +
+  theme_bryan() + scale_y_discrete(limits = c(0,1), expand = c(0,0)) + 
+  theme(axis.text.x = element_text(angle = 0), legend.position = 'none')
+g
+
+
+
+
+```
+
+
+
