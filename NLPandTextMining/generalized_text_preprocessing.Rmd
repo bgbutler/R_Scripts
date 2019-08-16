@@ -1,0 +1,157 @@
+---
+title: "Generalized Text Preprocessing"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+In this code, replace YOUR_TABLE with your dataframe and replace YOUR_TEXT with the field you are cleaning. Upon tokenizing, replace TOKENS_DF with your preferred name. 
+
+### Replace Words 
+
+```{r, eval=FALSE}
+# original words for replacement
+orig_words <- c('insd', 'insrd', 'ins', 'agt', 'agnt', 'cancellation', 'prem', 'pmt', 'cov', 'req', 'attn', 'pymt', 'rcvd', 'recd', 'toyt', 'doesn', 'acct', 'cancelled', 'pymnt', 'pmyt', 'pmts', 'wasn', 'agcy', 'mortg', 'eff', 'adv', 'advsd', 'advd', 'uw', 'veh', 'didn', 'recieved', 'recvd', 'amt', 'xfer', 'dr', 'insureds', 'liab', 'xfered', 'xferred', 'trsf', 'insure', 'restricti', 'restric', 'restrictio', 'restrict', 'restri', 'dodg', 'niss', 'suba', 'wouldn', 'couldn', 'inq', 'chvy', 'covg', 'dept', 'recv', 'hond', 'isnd', 'lexs', 'chng', 'deduc', 'amnt', 'cst', 'insds', 'premi', 'pre', 'premiu', 'addr', 'buic', 'fro', 'hadn', 'addl', 'cance')
+
+# corresponding replacement words 
+repl_words <- c('insured', 'insured', 'insurance', 'agent', 'agent', 'cancel', 'premium', 'payment', 'coverage', 'required', 'attention', 'payment', 'recieved', 'recieved', 'toyota', 'doesnt', 'account', 'cancel', 'payment', 'payment', 'payment', 'wasnt', 'agency', 'mortgage', 'effective', 'advise', 'advise', 'advise', 'underwriter', 'vehicle', 'didnt', 'received', 'received', 'amount', 'transfer', 'doctor', 'insured', 'liability', 'transfer', 'transfer', 'transfer', 'insured', 'restriction', 'restriction', 'restriction', 'restriction', 'restriction', 'dodge', 'nissan', 'subaru', 'wouldnt', 'couldnt', 'inquire', 'chevy', 'coverage', 'department', 'received', 'honda', 'insured', 'lexus', 'change', 'deduction', 'amount', 'cost', 'insured', 'premium', 'premium', 'premium', 'address', 'buick', 'from', 'hadnt', 'additional', 'cancel')
+
+# check to make sure original and repl words match up
+length(orig_words) == length(repl_words)
+
+# add a space to the end of the words
+orig_words <- orig_words %>% paste0(" ")
+repl_words <- repl_words %>% paste0(" ")
+
+# create data frame of word replacements
+word_fixes <- tibble("original" = orig_words, "replacement" = repl_words)
+
+# loop to replace orig_words with replacement words
+for (j in 1:length(word_fixes$original)){
+  YOUR_TABLE <- YOUR_TABLE %>% mutate("Resolution_Notes" = str_replace_all(TEXT_AREA, word_fixes[[1]][j], word_fixes[[2]][j]))  
+}
+```
+
+### Names 
+
+To remove names, first download: 
+
+https://catalog.data.gov/dataset/baby-names-from-social-security-card-applications-national-level-data
+
+Then extract the files into a folder by themselves. While in that folder within file explorer, right click and select open terminal here (linux / mac) or open git bash here to enter the terminal. 
+
+Then enter the following script to concatenate all the files: 
+
+```{bash, eval = FALSE}
+cat *.text >> all_names.txt
+```
+
+You should get a single text file called all_names.txt. Place this file into the project's working directory. 
+
+```{r, eval=FALSE}
+# read in txt file delimited by comma
+names_1 <- read_delim("all_names.txt", ',', col_names = FALSE)
+
+# grab first column and filter for unique names
+unique_names <- names_1$X1 %>% unique() %>% tolower()
+
+# place in dataframe
+names_tibble <- tibble("names" = unique_names)
+
+# names table sample 
+names_tibble %>% head(5)
+
+# see how many unique names are removed
+names_tibble %>% dim()
+```
+
+### Remove Function Words 
+
+```{r, eval=FALSE}
+# create list of custom words to remove 
+custom_stop_words <- c("", "gmail", "yahoo")
+
+# create dataframe for soon to be deleted words
+custom_stop_word_table <- tibble(word = custom_stop_words, lexicon = "custom")
+
+# add names to custom stop words
+custom_stop_word_table <- add_row(custom_stop_word_table, word = names_tibble$names, lexicon = "common_names")
+
+# bind together custom stop words with stop words dictionary 
+stop_words <- add_row(stop_words, word = custom_stop_word_table$word, lexicon = custom_stop_word_table$lexicon)
+```
+
+
+### Tokenize
+
+```{r, eval=FALSE}
+# tokenize words, keep text columns
+TOKENS_DF <- YOUR_TABLE %>% unnest_tokens(word, YOUR_TEXT, token = stringr::str_split, pattern = " ", drop = FALSE)
+
+# antijoin to remove stop words from tokenized text
+TOKENS_DF <- TOKENS_DF %>% anti_join(stop_words)
+
+# tokens sample 
+TOKENS_DF$word %>% head(5)
+TOKENS_DF %>% head(5)
+```
+
+### Create Bigrams and Trigrams
+
+```{r, eval=FALSE}
+# tokenize text into bigrams and remove stop words
+bigram_tokens <- YOUR_TABLE %>% unnest_tokens(bigram, YOUR_TEXT, token = "ngrams", n = 2, drop = FALSE) %>% 
+  separate(bigram, c("word_1", "word_2"), sep = " ", remove = FALSE) %>% 
+  filter(!word_1 %in% stop_words$word,
+         !word_2 %in% stop_words$word)
+
+# tokenize text into trigrams and remove stop words
+trigram_tokens <- YOUR_TABLE %>% unnest_tokens(trigram, YOUR_TEXT, token = "ngrams", n = 3, drop = FALSE) %>%
+  separate(trigram, c("word_1", "word_2", "word_3"), sep = " ", remove = FALSE) %>% 
+  filter(!word_1 %in% stop_words$word,
+         !word_2 %in% stop_words$word,
+         !word_3 %in% stop_words$word)
+```
+
+
+```{r, eval=FALSE}
+# bigram sample
+bigram_tokens$bigram %>% head(5)
+
+# trigram sample 
+trigram_tokens$trigram %>% head(5)
+```
+
+### Check Word Replacement Accuracy
+
+This should give you an idea of how well the cleaning process worked
+
+```{r, eval=FALSE}
+# create count vectors 
+counts_orig <- 1:length(word_fixes$original)
+counts_repl <- 1:length(word_fixes$replacement)
+
+# loop through looking for instances where the mutate above failed and succeeded
+for (i in 1:length(word_fixes$original)){
+  # find counts of unfixed map words
+  counts_orig[i] <- TOKENS_DF %>% 
+    filter(word == str_trim(word_fixes[[1]][i])) %>% 
+    count()
+  
+  # find counts of fixed map words
+  counts_repl[i] <- tokens %>% 
+    filter(word == str_trim(word_fixes[[2]][i])) %>% 
+    count()
+}
+
+# get counts
+counts_orig <- counts_orig %>% accumulate(sum)
+counts_repl <- counts_repl %>% accumulate(sum)
+
+# find proportion of words correctly cleaned 
+prop_clean <- 1 - (counts_orig[length(counts_orig)] / counts_repl[length(counts_repl)])
+prop_clean
+```
+

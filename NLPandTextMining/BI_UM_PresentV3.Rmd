@@ -1,0 +1,1047 @@
+---
+title: "UM BI Claims"
+author: "Bryan Butler"
+date: "April 4, 2019"
+output:
+    html_document:
+    toc: false
+    toc_depth: 1
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, cache.lazy = FALSE)
+```
+
+# <strong>UM & BI Claims</strong> {.tabset .tabset-fade .tabset-pills}
+
+
+
+<style>
+  .main-container {
+    max-width: 1200px !important;
+    margin-left: auto;
+    margin-right: auto;
+  }
+</style>
+
+
+```{r loadLibraries, echo=F, warning=FALSE, message=FALSE, cache = F, tidy=T}
+# load libraries for text mining
+
+library(ggplot2)
+library(reshape2)
+library(scales)
+library(SnowballC)          # Porter's word stemming
+library(tm)                 # Text Cleaning and Processing
+library(RTextTools)         # Automatic Text Classification via Supervised Learning
+library(stringi)            # For processing strings
+library(wordcloud)          # Plot word clouds
+library(RWeka)              # Machine Learning Java Library for Tokenization
+library(tidytext)           # Additional Text Processing Library (new from RStudio)
+library(tidyr)              
+library(knitr)
+library(dendextend)         # Making Dendograms
+library(dendextendRcpp)     # Supporting package for dendextend
+library(qdapRegex)          # function to remove words less than 3 letters
+library(readr)
+library(stringr)
+library(textclean)
+library(forcats)
+
+
+# Modeling Libraries
+library(caret)
+library(Metrics)
+library(pROC)
+library(naivebayes)         # Naive Bayes package
+library(klaR)               # Alternative NB package
+library(e1071)              # Windows specific modeling package best NB package
+library(caTools)            # Utility function to help modeling split
+library(randomForest)
+
+# Manipulating Data
+library(dplyr)
+
+# use this theme for any ggplots
+theme_bryan <- function () { 
+  theme(axis.text.x = element_text(size = 8, color = 'blue', angle = 90),
+        legend.position = 'right',
+        axis.text.y = element_text(color = 'blue'),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        strip.text.x = element_text(size = 10, face = 'bold'),
+        strip.background = element_rect(fill = 'light blue'))
+}
+
+```
+
+
+
+```{r getFile, warning=F, echo=F, message=FALSE}
+setwd('N:/Projects/Text-Mining/BI_UM_Text')
+dataURL <- 'BI_UM_Claims_Text.csv'
+textDf <- read.csv(dataURL, stringsAsFactors = F)
+
+```
+
+
+```{r names, echo=F, cache=F, warning=FALSE, message=FALSE}
+# get the names data to remove from text
+# read in txt file delimited by comma
+names_1 <- read_delim("all_names.txt", ',', col_names = FALSE)
+
+# grab first column and filter for unique names
+unique_names <- names_1$X1 %>% unique() %>% tolower()
+
+# place in dataframe
+names_df <- as.data.frame(unique_names)
+
+names_df$unique_names <- as.character(names_df$unique_names)
+
+# head(names_df)
+
+
+
+# original words for replacement
+orig_words <- c('insd','insrd', 'ins', 'agt', 'agnt', 'cancellation',
+                'prem', 'pmt', 'cov', 'req', 'attn', 'pymt', 'rcvd',
+                'recd', 'toyt', 'doesn', 'acct', 'cancelled', 'pymnt',
+                'pmyt', 'pmts', 'wasn', 'agcy', 'mortg', 'eff', 'adv',
+                'advsd', 'advd', 'uw', 'veh', 'didn', 'recieved', 'recvd',
+                'amt', 'xfer', 'dr', 'insureds', 'liab', 'xfered', 'xferred',
+                'trsf', 'insure', 'restricti', 'restric', 'restrictio', 'restrict',
+                'restri', 'dodg', 'niss', 'suba', 'wouldn', 'couldn', 'inq',
+                'chvy', 'covg', 'dept', 'recv', 'hond', 'isnd', 'lexs', 'chng',
+                'deduc', 'amnt', 'cst', 'insds', 'premi', 'pre', 'premiu', 'addr', 
+                'buic', 'fro', 'hadn', 'addl', 'cance', 'clmt', 'cmlt','atty', 'attny')
+
+
+# corresponding replacement words 
+repl_words <- c('insured', 'insured', 'insurance', 'agent', 'agent', 'cancel', 
+                'premium', 'payment', 'coverage', 'required', 'attention', 
+                'payment', 'recieved', 'recieved', 'toyota', 'doesnt', 'account', 
+                'cancel', 'payment', 'payment', 'payment', 'wasnt', 'agency', 
+                'mortgage', 'effective', 'advise', 'advise', 'advise', 
+                'underwriter', 'vehicle', 'didnt', 'received', 'received', 
+                'amount', 'transfer', 'doctor', 'insured', 'liability', 'transfer', 
+                'transfer', 'transfer', 'insured', 'restriction', 'restriction', 
+                'restriction', 'restriction', 'restriction', 'dodge', 'nissan', 
+                'subaru', 'wouldnt', 'couldnt', 'inquire', 'chevy', 'coverage', 
+                'department', 'received', 'honda', 'insured', 'lexus', 'change', 
+                'deduction', 'amount', 'cost', 'insured', 'premium', 'premium', 
+                'premium', 'address', 'buick', 'from', 'hadnt', 'additional', 
+                'cancel', 'claimant', 'claimant', 'attorney', 'attorney')
+
+
+# check to make sure original and repl words match up
+# length(orig_words) == length(repl_words)
+
+# add a space to the end of the words
+# using qdap will replace these later on
+orig_words <- orig_words %>% paste0(" ")
+repl_words <- repl_words %>% paste0(" ")
+```
+
+
+```{r cleanData, echo=F, cache=F, warning=FALSE, message=FALSE}
+# clean up the dates types
+textDf$note_date <- as.Date(textDf$authoringdate, format = '%d/%M/%Y')
+textDf$loss_date <- as.Date(textDf$dt_of_loss, format = '%d/%m/%Y')
+textDf$note_year <- lubridate::year(textDf$note_date)
+textDf$loss_year <- lubridate::year(textDf$loss_date)
+
+# make factors
+textDf$topic <- as.factor(textDf$topic)
+textDf$subject <- as.factor(textDf$subject)
+
+
+# make um bi numeric
+textDf$bi_il <- as.numeric(textDf$bi_il)
+textDf$um_il <- as.numeric(textDf$um_il)
+
+
+# add identifier for um/bi
+textDf$coverage <- ifelse(textDf$bi_il == 0, "um", "bi")
+
+# remove extra columns
+# test_df[, !(colnames(test_df) %in% rm_col), drop = FALSE]
+rm_col <- c('year', 'year.1', 'authoringdate', 'dt_of_loss')
+textDf <- textDf[, !(colnames(textDf) %in% rm_col), drop = FALSE]
+
+# cut the incurred loss into bins
+# first take the max, they are mutually exclusive
+textDf$loss <- pmax(textDf$bi_il, textDf$um_il)
+
+textDf$loss_bins <-  cut(textDf$loss,
+                         c(0, 25000,50000,125000, 250000, 10000000), include.lowest = T,
+                         labels = c('0-25K', '025-50K', '050-125K','125-250K','250K+'))
+
+# remove NA from coverage
+textDf <- textDf %>% filter(!is.na(coverage))
+
+
+# make the final identifier
+textDf$claim_bin <- paste(textDf$coverage, textDf$loss_bins, sep = ": ")
+
+# make loss year a character
+textDf$loss_year_char <- as.character(textDf$loss_year)
+
+textDf <- textDf %>% filter(loss_year != 'NA')
+
+textDf$claim_yr_bin <- paste(textDf$loss_year_char, textDf$coverage, textDf$loss_bins, sep = ": ")
+
+```
+
+
+
+```{r cleanText, echo=F, cache=T, warning=FALSE, message=FALSE}
+# process the text to clean
+# First step in Processing
+textDf$masked_notetext <- tolower(textDf$masked_notetext)
+
+stop_words <- stopwords("english")
+keep <- c("no", "more", "not", "can't", "cannot", "isn't", "aren't", "wasn't",
+          "weren't", "hasn't", "haven't", "hadn't", "doesn't", "don't", "didn't", "won't")
+newWords <- stop_words [! stop_words %in% keep]
+words_names <- c(newWords, unique_names)
+
+
+# replace double '' with single
+textDf$text_clean <- gsub("''", "'", textDf$masked_notetext)
+
+# expand the contractions
+textDf$text_clean <- qdap::replace_contraction(textDf$text_clean)
+
+
+## BUILD FUNCTIONS FOR CLEANING ###
+# clean the format remove oddball chars leaves a\
+non_ascii <- function (x) {replace_non_ascii(x, remove.nonconverted = TRUE)}
+clean_non_ascii <- function (x) {gsub(" a\"", " ", x)}
+
+# apply functions
+textDf$text_clean <- non_ascii(textDf$text_clean)
+textDf$text_clean <- clean_non_ascii(textDf$text_clean)
+
+# remove masking combination of six x's()
+pattern <- c("xxx*[a-z]")
+repl_masking <- function (x) {gsub(pattern, " ",x)}
+textDf$text_clean <- repl_masking(textDf$text_clean)
+
+
+# clean possessives
+possessive <- function (x) {gsub("'s", " ", x)}
+textDf$text_clean <- possessive(textDf$text_clean)
+
+# remove URLs from http to first space
+url_repl <- function (x) {gsub("(http)(.*?)[[:space:]]+", " ", x)}
+textDf$text_clean <- url_repl(textDf$text_clean)
+# clean up residuals
+pat_resid <- c("&([a-z]|[0-9]|=|_)*")
+repl_resid <- function (x) {gsub(pat_resid, " ",x)}
+textDf$text_clean <- repl_resid(textDf$text_clean)
+
+
+# clean punctuation
+punct_replace <- function (x) {str_replace_all(x, '[[:punct:]]', ' ')}
+textDf$text_clean <- punct_replace(textDf$text_clean)
+
+# replace words
+use_dict <- function (x) {qdap::mgsub(orig_words, repl_words,x)}
+textDf$text_clean <- use_dict(textDf$text_clean)
+
+# replace the names
+textDf$text_clean <- textclean::replace_names(textDf$text_clean, 
+                                              names = unique_names,
+                                              replacement = " ")
+
+
+smallWds <- function(x) {rm_nchar_words(x, "1,2")}
+wordsNumbers <- function(x) {gsub("[^[:alnum:][:blank:]']", " ", x)}
+
+# write clean csv
+write.csv(textDf, file='bi_um_clean_text.csv', row.names=FALSE)
+
+# clean and process
+text <- VCorpus(VectorSource(textDf$text_clean))
+text <- tm_map(text,PlainTextDocument)
+text <- tm_map(text, removeWords, newWords)
+
+text <- tm_map(text, removePunctuation)
+text <- tm_map(text, removeNumbers)
+text <- tm_map(text, content_transformer(wordsNumbers))
+text <- tm_map(text, content_transformer(smallWds))
+
+# text <- tm_map(text, stripWhitespace)
+
+```
+
+
+## Overview of Analysis
+### Clean and tokenize text into single word document term matri(DTM)
+### Cluster by coverage, claim size bin, and year, note topic
+#### - Looking for expected groupings and anamolies
+### Visualize the claim note topics as a first step
+#### - How the note counts vary from year to year
+#### - How the note counts vary from first 12 months to all months
+#### - How note counts are composed by claim numbers
+### Analyze key phrases for very large loss bins
+#### - Look for similarities in both weighted (rare) and common terms
+### Look at key terms in Medical, Litigation and Investigation topics
+
+
+
+
+
+## Cluster by Coverage and Claim
+### Coverage/Claims next to each other have similar word counts
+### Bi: 250K+ and 125 - 250K are close, but not as cose to similar UM notes
+#### - By claim size, UM splits follow an expected pattern
+```{r clusterClaimBin, echo=F, warning=F, fig.height=10, fig.width=12, message=F}
+# start cluster analysis
+# requires DTM
+# make the DTM
+DTM <- DocumentTermMatrix(text)
+
+# Convert it to a data frame via matrix
+# Collapse it down to state
+dtmDF <- as.data.frame(as.matrix(removeSparseTerms(x = DTM, sparse = .9995)))
+
+# need to be careful of the column name
+dtmDF$claim_bins <- as.factor(textDf$claim_bin)
+df_claim <- aggregate(dtmDF[,-length(dtmDF)], by = list(dtmDF$claim_bins), sum)
+
+# Remove sparse terms and columns by picking columns that sum to 5 or more
+# Setting the sum equal to a frequency for the entire set
+dfClaimRed <- df_claim[,colSums(df_claim[,2:length(df_claim)]) > 5]
+rownames(dfClaimRed) <- df_claim[,1]
+
+# Create a correlation matrix and make it a distance matrix
+words <- length(dfClaimRed) 
+dis <- as.dist(1 - cov2cor(cov(dfClaimRed[,c(2:words)], 
+                               method = "pearson", 
+                               use = "pairwise.complete.obs")))
+
+# remove scientific notation
+options(scipen = 999)
+
+par(mar = c(2.5, 0.5, 1.0, 7))
+d <- dist(dfClaimRed, method = "euclidean")
+hc <- hclust(d)
+dend <- d %>% hclust %>% as.dendrogram
+labels_cex(dend) <- 1.25
+dend %>% 
+  color_branches(k=5) %>%
+  color_labels() %>%
+  highlight_branches_lwd(4) %>% 
+  plot(horiz=TRUE, main = "Claim Word Clusters by Claim Bin", axes = T, xlim = c(40000,0))
+
+```
+
+
+## Cluster by Year and Claims
+### Small BI claims at bottom grouped together, not really similar to small UM claims
+### Bi claims from 25 - 125K are similar as a group at the top
+### 2016 is a break point
+### 2016 smaller UM claims (purple) in with larger claims
+### 2016, 2017, 2018 very large BI and UM claims similar (green grouping)
+### 2013, 2017, 2017 250K+ Bi claims are similar
+```{r clusterYearBins, echo=F, warning=F, fig.height=10, fig.width=12, message=F}
+# cluster on loss year bins
+# need to be careful of the column name
+dtmDF$claim_yr_bins <- as.factor(textDf$claim_yr_bin)
+
+# drop claim bins first
+dtmDF$claim_bins <- NULL
+
+# run to ensure last column
+# grep("claim_yr_bins", colnames(dtmDF))
+
+# aggregate it
+df_claim <- aggregate(dtmDF[,-length(dtmDF)], by = list(dtmDF$claim_yr_bins), sum)
+
+# reduce the data set
+
+# Remove sparse terms and columns by picking columns that sum to 5 or more
+# Setting the sum equal to a frequency for the entire set
+# remove NA
+dfClaimRed <- df_claim[,colSums(df_claim[,2:length(df_claim)]) > 5]
+rownames(dfClaimRed) <- df_claim[,1]
+
+# Create a correlation matrix and make it a distance matrix
+words <- length(dfClaimRed) 
+dis <- as.dist(1 - cov2cor(cov(dfClaimRed[,c(2:words)], 
+                               method = "pearson", 
+                               use = "pairwise.complete.obs")))
+
+# remove scientific notation
+options(scipen = 999)
+
+par(mar = c(2.5, 0.5, 1.0, 7))
+d <- dist(dfClaimRed, method = "euclidean")
+hc <- hclust(d)
+dend <- d %>% hclust %>% as.dendrogram
+labels_cex(dend) <- 0.85
+dend %>% 
+  color_branches(k=8) %>%
+  color_labels() %>%
+  highlight_branches_lwd(4) %>% 
+  plot(horiz=TRUE, main = "Claim Word Clusters by Claim Yr Bin", axes = T, xlim = c(15000,0))
+
+
+```
+
+
+
+
+## Cluster by Note Topic
+### Green cluster at top is a mix of Medical, General, Litigation topics for very large claims
+### Salvage topics are spread out
+### Liability Determination for very large BI, clustering with all UM
+### Investigation UM separate from others (Blue)
+```{r clusterTopicBins, echo=F, warning=F, fig.height=10, fig.width=12, message=F}
+###### Clustering by topic
+
+# need to be careful of the column name
+textDf$topic_claim_bin <- paste(textDf$topic, textDf$coverage, textDf$loss_bins, sep = ": ")
+dtmDF$topic_claim_bins <- as.factor(textDf$topic_claim_bin)
+
+# remove the 0 - 25K bins
+unique_bins <- unique(dtmDF$topic_claim_bins)
+# unique_bins
+
+dtmDF <- dtmDF %>% dplyr::filter(!str_detect(topic_claim_bins, '0-25K'))
+dtmDF <- dtmDF %>% dplyr::filter(!str_detect(topic_claim_bins, '025-50K'))
+
+# drop claim bins first
+dtmDF$claim_yr_bins <- NULL
+
+# run to ensure last column
+# grep("topic_claim_bins", colnames(dtmDF))
+
+# aggregate it
+df_claim <- aggregate(dtmDF[,-length(dtmDF)], by = list(dtmDF$topic_claim_bins), sum)
+
+# reduce the data set
+
+# Remove sparse terms and columns by picking columns that sum to 5 or more
+# Setting the sum equal to a frequency for the entire set
+# remove NA
+dfClaimRed <- df_claim[,colSums(df_claim[,2:length(df_claim)]) > 5]
+rownames(dfClaimRed) <- df_claim[,1]
+
+# Create a correlation matrix and make it a distance matrix
+words <- length(dfClaimRed) 
+dis <- as.dist(1 - cov2cor(cov(dfClaimRed[,c(2:words)], 
+                               method = "pearson", 
+                               use = "pairwise.complete.obs")))
+
+# remove scientific notation
+options(scipen = 999)
+
+par(mar = c(2.5, 0.5, 1.0, 8))
+d <- dist(dfClaimRed, method = "euclidean")
+hc <- hclust(d)
+dend <- d %>% hclust %>% as.dendrogram
+labels_cex(dend) <- 0.70
+dend %>% 
+  color_branches(k=8) %>%
+  color_labels() %>%
+  highlight_branches_lwd(4) %>% 
+  plot(horiz=TRUE, main = "Claim Word Clusters by Topic Claim Bin", axes = T, xlim = c(5000,0))
+
+```
+
+
+
+## Claim Note Topic Counts
+### Topics Counts By Year All Development Years
+#### 2016 Big increase in UM Medical notes; also Investigation and Litigation
+#### Litigation notes are late developing (smaller in 2016, 2017, 2018)
+#### Salvage has a higher role in the first 12 months
+```{r plotTopicCounts, echo=F, warning=F, fig.height=10, fig.width=12, message=F}
+hanover <- c('light green', 'grey', 'blue', 'orange', 'darkgreen')
+ex_general <- textDf %>% filter(topic != 'General')
+
+## @knitr plotTopics
+col <- c("orange", "dark green")
+g <- ggplot(ex_general, aes(x = forcats::fct_rev(fct_infreq(topic)), fill = coverage)) + 
+  coord_flip() + 
+  geom_bar(stat = 'count') + 
+  scale_fill_manual(values = col) +
+  facet_wrap(~loss_year) + 
+  theme_bryan()
+g
+```
+
+
+### Check the First 12 Months Only
+#### Litigation is much smaller portion of first 12 months notes; develops later
+#### In first 12 months, Investigation leads medical for 2013 - 2015
+#### Medical and Investigation switch in 2016 - 2018
+```{r first_year, echo=F, warning=F, fig.height=10, fig.width=12, message=F}
+first_year <- ex_general %>% filter(note_year == loss_year)
+col <- c("orange", "dark green")
+g <- ggplot(first_year, aes(x = forcats::fct_rev(fct_infreq(topic)), fill = coverage)) + coord_flip() +
+  geom_bar(stat = 'count') + 
+  scale_fill_manual(values = col) +
+  facet_wrap(~loss_year) + 
+  theme_bryan()
+g
+```
+
+
+
+### Count of Unique Claim Numbers for UM
+#### 2014 UM claims were smaller
+#### Claim size growing with larger portions of green and orange starting in 2015
+#### 2016 and 2018 showing much more activity in the 250K+ bin
+```{r um_claims, echo=F, warning=F, fig.height=10, fig.width=12, message=F}
+# count claim numbers
+topic_rollup <- ex_general %>% group_by(topic, loss_year, coverage, claim_bin) %>%
+  summarise(unique_claims = n_distinct(claimnumber)) 
+
+um_topic_rollup <- topic_rollup %>% filter(coverage == 'um')
+
+g <- ggplot(um_topic_rollup, aes(x = reorder(topic, unique_claims), y = unique_claims, fill = claim_bin)) + coord_flip() + 
+  geom_bar(stat = 'identity') + 
+  scale_fill_manual(values = hanover) +
+  facet_wrap(~loss_year) + 
+  theme_bryan()
+g
+```
+
+
+
+### Count of Unique Claim Numbers Bi
+#### Fairly steady mix, with a spike in 2015
+#### Liability and Coverage notes exceed medical and litigation
+```{r bi_claims, echo=F, warning=F, fig.height=10, fig.width=12, message=F}
+# now bi
+bi_topic_rollup <- topic_rollup %>% filter(coverage == 'bi')
+
+g <- ggplot(bi_topic_rollup, aes(x = reorder(topic, unique_claims), y = unique_claims, fill = claim_bin)) + coord_flip() + 
+  geom_bar(stat = 'identity') + 
+  scale_fill_manual(values = hanover) +
+  facet_wrap(~loss_year) + 
+  theme_bryan()
+g
+```
+
+
+
+
+
+### Claim Note Counts within General Topic
+#### Less activity in the larger bins for BI over time
+#### UM showing some spikes in 2016 and potentially 2018
+```{r general, echo=F, warning=F, fig.height=10, fig.width=12, message=F}
+topic_general <- textDf %>% filter(topic == 'General')
+g <- ggplot(topic_general, aes(x = forcats::fct_rev(fct_infreq(coverage)), fill = loss_bins)) + coord_flip() + 
+  geom_bar(stat = 'count') + 
+  scale_fill_manual(values = hanover) + 
+  facet_wrap(~loss_year) + 
+  theme_bryan()
+g
+```
+
+
+### UM Topic Counts By Claim Bin
+#### Medical showing growth in larger bin starting in 2015
+#### Litigation activity likley to grow as shown in previous plots
+```{r um_topicCounts, echo=F, warning=F, fig.height=10, fig.width=12, message=F}
+# um first
+um_ex_general <- ex_general %>% filter(coverage == 'um')
+g <- ggplot(um_ex_general, aes(x = forcats::fct_rev(fct_infreq(topic)), fill = claim_bin)) + coord_flip() + 
+  geom_bar(stat = 'count') + 
+  scale_fill_manual(values = hanover) +
+  facet_wrap(~loss_year) + 
+  theme_bryan()
+g
+```
+
+
+
+### BI Topic Counts By Claim Bin
+#### 2014, 2015, 2016 reflect a lot of activity in medical
+#### Litigation spike in 2016
+```{r bi_topicCounts, echo=F, warning=F, fig.height=10, fig.width=12, message=F}
+bi_ex_general <- ex_general %>% filter(coverage == 'bi')
+g <- ggplot(bi_ex_general, aes(x = forcats::fct_rev(fct_infreq(topic)), fill = claim_bin)) + coord_flip() + 
+  geom_bar(stat = 'count') + 
+  scale_fill_manual(values = hanover) +
+  facet_wrap(~loss_year) + 
+  theme_bryan()
+g
+
+```
+
+
+
+
+```{r largeLoss, echo=F, cache=F, warning=FALSE, message=FALSE}
+large <- textDf %>% filter(loss > 50000)
+
+
+# clean and process
+text <- VCorpus(VectorSource(large$text_clean))
+text <- tm_map(text,PlainTextDocument)
+text <- tm_map(text, removeWords, newWords)
+text <- tm_map(text, removeWords, "gonzalez")
+text <- tm_map(text, removePunctuation)
+text <- tm_map(text, removeNumbers)
+text <- tm_map(text, content_transformer(wordsNumbers))
+text <- tm_map(text, content_transformer(smallWds))
+
+
+# tokenize
+tokens <- 3
+MygramTokenizer <- function(x) {RWeka::NGramTokenizer(x, Weka_control(min = tokens, max = tokens))}
+
+
+# weighted values
+llDTM <- DocumentTermMatrix(text, control = list(weighting = 
+                                                          function(x)
+                                                          weightTfIdf(x, normalize = FALSE), 
+                                                          tokenize = MygramTokenizer))
+
+# Collapse it down
+llTextDF <- as.data.frame(as.matrix(removeSparseTerms(x = llDTM, sparse = .9999)))
+llTextDF$yr_claim <- as.factor(large$claim_yr_bin)
+lldf <- aggregate(llTextDF[,-length(llTextDF)], by = list(llTextDF$yr_claim), sum)
+colnames(lldf)[colnames(lldf) == 'Group.1'] <- 'YearClaim'
+
+
+# common values
+llDTM_freq <- DocumentTermMatrix(text, control = list(tokenize = MygramTokenizer))
+
+# Collapse it down
+llTextDF_freq <- as.data.frame(as.matrix(removeSparseTerms(x = llDTM_freq, sparse = .9999)))
+llTextDF_freq$yr_claim <- as.factor(large$claim_yr_bin)
+lldf_freq <- aggregate(llTextDF_freq[,-length(llTextDF_freq)], by = list(llTextDF_freq$yr_claim), sum)
+colnames(lldf_freq)[colnames(lldf_freq) == 'Group.1'] <- 'YearClaim'
+
+
+
+
+# Melt the data
+melttext <- melt(lldf, id = 'YearClaim',
+                 variable.name = 'Term',
+                 value.name = 'TFIDF')
+
+melttext_freq <- melt(lldf_freq, id = 'YearClaim',
+                 variable.name = 'Term',
+                 value.name = 'Freq')
+
+
+```
+
+
+
+
+## Large Losses 250K+
+### Two methods: Terms weighted for importance and simple count
+### Using Largest Loss Bin
+### Key UM Terms by Year
+#### 2015, 2017 involved death
+#### 2016 neck and back pain with large coverage
+#### 2018 involved some very bad medical issues
+```{r umlargeLosses_weighted, echo=F, warning=F, fig.height=10, fig.width=12, message=F}
+# alternate plot for um
+rollup <- melttext %>% 
+  group_by(YearClaim, Term) %>% 
+  mutate(TFIDF = jitter(TFIDF, amount = 0.00001)) %>%
+  summarise(Total = sum(TFIDF)) %>%
+  filter(str_detect(YearClaim, 'um: 250K+')) %>% 
+  top_n(40)
+
+g <-  ggplot(rollup, aes(reorder(Term, Total), Total, fill = YearClaim)) + 
+  geom_col(show.legend = FALSE, fill = "#7FD4BE", color = "#6EB7A9") + 
+  labs(x = NULL, y = "count") + 
+  facet_wrap(~YearClaim, ncol = 3, scales = "free") + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  coord_flip()
+g
+```
+
+
+### Frequent UM Terms by Year
+```{r umlargeLosses_freq, echo=F, warning=F, fig.height=10, fig.width=12, message=F}
+# alternate plot for um
+rollup_freq <- melttext_freq %>% 
+  group_by(YearClaim, Term) %>% 
+  mutate(Freq = jitter(Freq, amount = 0.00001)) %>%
+  summarise(Total = sum(Freq)) %>%
+  filter(str_detect(YearClaim, 'um: 250K+')) %>% 
+  top_n(40)
+
+g <-  ggplot(rollup_freq, aes(reorder(Term, Total), Total, fill = YearClaim)) + 
+  geom_col(show.legend = FALSE, fill = "#7FD4BE", color = "#6EB7A9") + 
+  labs(x = NULL, y = "count") + 
+  facet_wrap(~YearClaim, ncol = 3, scales = "free") + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  coord_flip()
+g
+```
+
+
+
+
+
+
+### BI Large Loss Key Terms by Year
+#### 2014 bad back injuries
+#### 2016 death and claims litigation
+#### 2017 involved police and litigation
+#### 2018 starting to show litigation
+```{r bilargeLosses_weighted, echo=F, warning=F, fig.height=10, fig.width=12, message=F}
+# alternative plot for bi
+rollupbi <- melttext %>% 
+  group_by(YearClaim, Term) %>% 
+  mutate(TFIDF = jitter(TFIDF, amount = 0.00001)) %>%
+  summarise(Total = sum(TFIDF)) %>%
+  filter(str_detect(YearClaim, 'bi: 250K+')) %>% 
+  top_n(40)
+
+
+
+g2 <-  ggplot(rollupbi, aes(reorder(Term, Total), Total, fill = YearClaim)) + 
+  geom_col(show.legend = FALSE, fill = "#7FD4BE", color = "#6EB7A9") + 
+  labs(x = NULL, y = "count") + 
+  facet_wrap(~YearClaim, ncol = 3, scales = "free") + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  coord_flip()
+g2
+```
+
+
+### BI Large Loss Frequent Terms by Year
+```{r bilargeLosses_freq, echo=F, warning=F, fig.height=10, fig.width=12, message=F}
+# alternative plot for bi
+rollupbi_freq <- melttext_freq %>% 
+  group_by(YearClaim, Term) %>% 
+  mutate(Freq = jitter(Freq, amount = 0.00001)) %>%
+  summarise(Total = sum(Freq)) %>%
+  filter(str_detect(YearClaim, 'bi: 250K+')) %>% 
+  top_n(40)
+
+
+
+g2 <-  ggplot(rollupbi_freq, aes(reorder(Term, Total), Total, fill = YearClaim)) + 
+  geom_col(show.legend = FALSE, fill = "#7FD4BE", color = "#6EB7A9") + 
+  labs(x = NULL, y = "count") + 
+  facet_wrap(~YearClaim, ncol = 3, scales = "free") + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  coord_flip()
+g2
+```
+
+
+
+
+## 125 - 250K Losses
+### UM Weighted
+#### Great deal of medical activity in 2015
+#### 2018 involves workers compensation and disability 
+```{r um_125_Losses_weighted, echo=F, warning=F, fig.height=10, fig.width=12, message=F}
+rollupum <- melttext %>% 
+  group_by(YearClaim, Term) %>% 
+  mutate(TFIDF = jitter(TFIDF, amount = 0.00001)) %>%
+  summarise(Total = sum(TFIDF)) %>%
+  filter(str_detect(YearClaim, 'um: 125-250K')) %>% 
+  top_n(40)
+
+
+
+g2 <-  ggplot(rollupum, aes(reorder(Term, Total), Total, fill = YearClaim)) + 
+  geom_col(show.legend = FALSE, fill = "#7FD4BE", color = "#6EB7A9") + 
+  labs(x = NULL, y = "count") + 
+  facet_wrap(~YearClaim, ncol = 3, scales = "free") + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  coord_flip()
+g2
+```
+
+
+### UM Frequent Terms
+```{r um_125_Losses_freq, echo=F, warning=F, fig.height=10, fig.width=12, message=F}
+rollupum_freq <- melttext_freq %>% 
+  group_by(YearClaim, Term) %>% 
+  mutate(Freq = jitter(Freq, amount = 0.00001)) %>%
+  summarise(Total = sum(Freq)) %>%
+  filter(str_detect(YearClaim, 'um: 125-250K')) %>% 
+  top_n(40)
+
+
+
+g2 <-  ggplot(rollupum_freq, aes(reorder(Term, Total), Total, fill = YearClaim)) + 
+  geom_col(show.legend = FALSE, fill = "#7FD4BE", color = "#6EB7A9") + 
+  labs(x = NULL, y = "count") + 
+  facet_wrap(~YearClaim, ncol = 3, scales = "free") + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  coord_flip()
+g2
+```
+
+
+
+
+### BI Weighted
+#### 2015 Litigation
+#### 2018 hospital activity
+```{r bi125_Losses_weighted, echo=F, warning=F, fig.height=10, fig.width=12, message=F}
+rollupbi <- melttext %>% 
+  group_by(YearClaim, Term) %>% 
+  mutate(TFIDF = jitter(TFIDF, amount = 0.00001)) %>%
+  summarise(Total = sum(TFIDF)) %>%
+  filter(str_detect(YearClaim, 'bi: 125-250K')) %>% 
+  top_n(40)
+
+
+g2 <-  ggplot(rollupbi, aes(reorder(Term, Total), Total, fill = YearClaim)) + 
+  geom_col(show.legend = FALSE, fill = "#7FD4BE", color = "#6EB7A9") + 
+  labs(x = NULL, y = "count") + 
+  facet_wrap(~YearClaim, ncol = 3, scales = "free") + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  coord_flip()
+g2
+```
+
+
+### BI Frequent
+```{r bi125_Losses_freq, echo=F, warning=F, fig.height=10, fig.width=12, message=F}
+rollupbi_freq <- melttext_freq %>% 
+  group_by(YearClaim, Term) %>% 
+  mutate(Freq = jitter(Freq, amount = 0.00001)) %>%
+  summarise(Total = sum(Freq)) %>%
+  filter(str_detect(YearClaim, 'bi: 125-250K')) %>% 
+  top_n(40)
+
+
+g2 <-  ggplot(rollupbi_freq, aes(reorder(Term, Total), Total, fill = YearClaim)) + 
+  geom_col(show.legend = FALSE, fill = "#7FD4BE", color = "#6EB7A9") + 
+  labs(x = NULL, y = "count") + 
+  facet_wrap(~YearClaim, ncol = 3, scales = "free") + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  coord_flip()
+g2
+```
+
+
+
+```{r select_topics, echo=F, cache=F, warning=FALSE, message=FALSE}
+# add the topic field
+llTextDF$note_topic <- as.factor(large$topic)
+
+# filter out medical and litigation
+medical <- llTextDF %>% filter(note_topic == "Medical")
+litigation <- llTextDF %>% filter(note_topic == "Litigation")
+investigation <- llTextDF %>% filter(note_topic == "Investigation")
+
+# drop the topic column
+llTextDF$note_topic <- NULL
+
+# drop the extra columns in the new df
+medical$note_topic <- NULL
+litigation$note_topic <- NULL
+investigation$note_topic <- NULL
+
+
+```
+
+
+
+
+## Weighted Medical Terms
+### UM Medical Terms
+### No real pattern of terms emerging
+#### Reflects earlier comments in the very large losses
+```{r medical, echo=F, warning=F, fig.height=10, fig.width=12, message=F}
+
+# roll it up by year
+medical_df <- aggregate(medical[,-length(medical)], by = list(medical$yr_claim), sum)
+colnames(medical_df)[colnames(medical_df) == 'Group.1'] <- 'YearClaim'  
+  
+
+# Melt the data
+melttext <- melt(medical_df, id = 'YearClaim',
+                 variable.name = 'Term',
+                 value.name = 'Freq')
+
+# create year and coverage field
+melttext$Year <- as.factor(substring(melttext$YearClaim, 1, 4))
+melttext$Coverage <- as.factor(substring(melttext$YearClaim, 7, 8))
+
+
+# alternate plot for 
+rollup <- melttext %>%
+  filter(Coverage == 'um') %>%
+  group_by(Year, Term) %>% 
+  mutate(Freq = jitter(Freq, amount = 0.00001)) %>%
+  summarise(Total = sum(Freq)) %>%
+  top_n(40)
+
+g <-  ggplot(rollup, aes(reorder(Term, Total), Total, fill = Coverage)) + 
+  geom_col(show.legend = FALSE, fill = "#7FD4BE", color = "#6EB7A9") + 
+  # geom_col(show.legend = FALSE) +
+  labs(x = NULL, y = "count") + 
+  facet_wrap(~Year, ncol = 3, scales = "free") + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  coord_flip()
+g
+
+```
+
+
+### BI Medical Terms
+### No real pattern, single claims seem to be driving issues
+```{r bi_medical, echo=F, warning=F, fig.height=10, fig.width=12, message=F}
+# alternate plot
+rollup <- melttext %>%
+  filter(Coverage == 'bi') %>%
+  group_by(Year, Term) %>% 
+  mutate(Freq = jitter(Freq, amount = 0.00001)) %>%
+  summarise(Total = sum(Freq)) %>%
+  top_n(40)
+
+g <-  ggplot(rollup, aes(reorder(Term, Total), Total, fill = Coverage)) + 
+  geom_col(show.legend = FALSE, fill = "#7FD4BE", color = "#6EB7A9") + 
+  labs(x = NULL, y = "count") + 
+  facet_wrap(~Year, ncol = 3, scales = "free") + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  coord_flip()
+g
+```
+
+
+
+
+
+## Weighted Litigation Terms
+### UM Litigation Terms
+### Both UM and BI are mixed with medical issues
+```{r litigation, echo=F, warning=F, fig.height=10, fig.width=12, message=F}
+
+# roll it up by year
+litigation_df <- aggregate(litigation[,-length(litigation)], by = list(litigation$yr_claim), sum)
+colnames(litigation_df)[colnames(litigation_df) == 'Group.1'] <- 'YearClaim'  
+  
+
+# Melt the data
+melttext <- melt(litigation_df, id = 'YearClaim',
+                 variable.name = 'Term',
+                 value.name = 'Freq')
+
+# create year and coverage field
+melttext$Year <- as.factor(substring(melttext$YearClaim, 1, 4))
+melttext$Coverage <- as.factor(substring(melttext$YearClaim, 7, 8))
+
+
+# alternate plot for
+rollup <- melttext %>%
+  filter(Coverage == 'um') %>%
+  group_by(Year, Term) %>% 
+  mutate(Freq = jitter(Freq, amount = 0.00001)) %>%
+  summarise(Total = sum(Freq)) %>%
+  top_n(40)
+
+g <-  ggplot(rollup, aes(reorder(Term, Total), Total, fill = Coverage)) + 
+  geom_col(show.legend = FALSE, fill = "#7FD4BE", color = "#6EB7A9") + 
+  # geom_col(show.legend = FALSE) +
+  labs(x = NULL, y = "count") + 
+  facet_wrap(~Year, ncol = 3, scales = "free") + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  coord_flip()
+g
+
+```
+
+
+### BI Litigation Terms
+#### Wages and medical issues
+#### Potential fraud issue in 2016 and 2018
+```{r bi_litigation, echo=F, warning=F, fig.height=10, fig.width=12, message=F}
+# alternate plot for um
+rollup <- melttext %>%
+  filter(Coverage == 'bi') %>%
+  group_by(Year, Term) %>% 
+  mutate(Freq = jitter(Freq, amount = 0.00001)) %>%
+  summarise(Total = sum(Freq)) %>%
+  top_n(40)
+
+g <-  ggplot(rollup, aes(reorder(Term, Total), Total, fill = Coverage)) + 
+  geom_col(show.legend = FALSE, fill = "#7FD4BE", color = "#6EB7A9") + 
+  labs(x = NULL, y = "count") + 
+  facet_wrap(~Year, ncol = 3, scales = "free") + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  coord_flip()
+g
+```
+
+
+
+
+## Weighted Investigation Terms
+### No pattern in UM or BI; variety of issues
+### UM Investigation Terms
+```{r investigation, echo=F, warning=F, fig.height=10, fig.width=12, message=F}
+
+# roll it up by year
+investigation_df <- aggregate(investigation[,-length(investigation)], by = list(investigation$yr_claim), sum)
+colnames(investigation_df)[colnames(investigation_df) == 'Group.1'] <- 'YearClaim'  
+  
+
+# Melt the data
+melttext <- melt(investigation_df, id = 'YearClaim',
+                 variable.name = 'Term',
+                 value.name = 'Freq')
+
+# create year and coverage field
+melttext$Year <- as.factor(substring(melttext$YearClaim, 1, 4))
+melttext$Coverage <- as.factor(substring(melttext$YearClaim, 7, 8))
+
+
+# alternate plot for
+rollup <- melttext %>%
+  filter(Coverage == 'um') %>%
+  group_by(Year, Term) %>% 
+  mutate(Freq = jitter(Freq, amount = 0.00001)) %>%
+  summarise(Total = sum(Freq)) %>%
+  top_n(40)
+
+g <-  ggplot(rollup, aes(reorder(Term, Total), Total, fill = Coverage)) + 
+  geom_col(show.legend = FALSE, fill = "#7FD4BE", color = "#6EB7A9") + 
+  # geom_col(show.legend = FALSE) +
+  labs(x = NULL, y = "count") + 
+  facet_wrap(~Year, ncol = 3, scales = "free") + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  coord_flip()
+g
+
+```
+
+
+
+### BI Investigation Terms
+```{r bi_investigation, echo=F, warning=F, fig.height=10, fig.width=12, message=F}
+# alternate plot for um
+rollup <- melttext %>%
+  filter(Coverage == 'bi') %>%
+  group_by(Year, Term) %>% 
+  mutate(Freq = jitter(Freq, amount = 0.00001)) %>%
+  summarise(Total = sum(Freq)) %>%
+  top_n(40)
+
+g <-  ggplot(rollup, aes(reorder(Term, Total), Total, fill = Coverage)) + 
+  geom_col(show.legend = FALSE, fill = "#7FD4BE", color = "#6EB7A9") + 
+  labs(x = NULL, y = "count") + 
+  facet_wrap(~Year, ncol = 3, scales = "free") + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  coord_flip()
+g
+```
+
+
+
+
+
+
