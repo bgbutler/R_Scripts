@@ -1,0 +1,908 @@
+---
+title: "Is There Demand for On Demand Insurance?<br>Insights for Insurers"
+author: "Bryan Butler<br>WPML Consulting"
+date: "Spring 2018"
+fig.width: 8
+fig height: 4.5
+output: ioslides_presentation
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE)
+
+# insurance survey data
+#these packages are more data cleaning and tefor text analytics
+
+library(dplyr)
+library(ggplot2)
+library(reshape2)
+library(scales)
+library(readxl)
+library(SnowballC)
+library(tm)
+library(RTextTools)
+library(stringi)
+library(wordcloud)
+# library(RWeka)
+library(ggpubr)
+library(tidytext)
+library(igraph)
+library(ggraph)
+library(tidyr)
+library(digest)
+library(data.table)
+# library(qdap)
+
+
+
+# need some dendrogram packages
+library(dendextend)
+library(dendextendRcpp)
+
+# prevent viewing dplyr tibbles
+options(dplyr.print_max = 1e9)
+
+
+# set the working directory
+setwd('~/Documents/DataSetsforDS/ConsumerSurvey/')
+dataURL <- 'SurveyCleanheaders.xlsx'
+
+# read the files from excel
+survey <- read_excel(dataURL, sheet = 1, col_names = TRUE,
+                   col_types = NULL, na = "", skip = 0)
+
+###################################################
+##  BEGIN DATA CLEANSING AND CODING
+
+# create some functions to clean and convert the comments as needed
+
+# convert the words to 1's and zeros
+wordToOne <- function (x) {as.numeric(ifelse(!is.na(x), 1,0))}
+
+# apply to the own values
+for (i in 4:18) {survey[,i] <- wordToOne(survey[,i])}
+
+# apply to pricing
+for (i in 43:54) {survey[,i] <- wordToOne(survey[,i])}
+
+# apply it to split coverages
+for (i in 62:78) {survey[,i] <- wordToOne(survey[,i])}
+
+# apply it to purchase from
+for (i in 79:87) {survey[,i] <- wordToOne(survey[,i])}
+
+# apply it to data share
+for (i in 96:108) {survey[,i] <- wordToOne(survey[,i])}
+
+
+# function for dealing with importance
+convertComments <- function(x) {as.numeric(ifelse(x == 'Extremely Important',  5, ifelse(
+    x == 'Very Important', 4, ifelse(x == 'Somewhat Important', 3,ifelse(
+        x == 'Not so important', 2,ifelse(x == 'Not at all important', 1,NA))))))
+}
+
+# apply this function to the Important Questions
+for (i in 21:35) {survey[,i] <- convertComments(survey[,i])}
+
+# change the groupings for frequency
+survey$ReviewBusCov <- as.factor(survey$ReviewBusCov)
+survey$PersReviewCov <- as.factor(survey$PersReviewCov)
+
+levels(survey$PersReviewCov)[levels(survey$PersReviewCov) =='Twice a Year'] <- 'More than Annually'
+levels(survey$PersReviewCov)[levels(survey$PersReviewCov) =='Quarterly'] <- 'More than Annually'
+levels(survey$PersReviewCov)[levels(survey$PersReviewCov) =='Every Month'] <- 'More than Annually'
+levels(survey$PersReviewCov)[levels(survey$PersReviewCov) =='Every Week'] <- 'More than Annually'
+
+levels(survey$ReviewBusCov)[levels(survey$ReviewBusCov) =='Twice a Year'] <- 'More than Annually'
+levels(survey$ReviewBusCov)[levels(survey$ReviewBusCov) =='Quarterly'] <- 'More than Annually'
+levels(survey$ReviewBusCov)[levels(survey$ReviewBusCov) =='Every Month'] <- 'More than Annually'
+levels(survey$ReviewBusCov)[levels(survey$ReviewBusCov) =='Every Week'] <- 'More than Annually'
+
+
+# ordered factors for review
+orderReview <- function (x) {factor(x, ordered = T,
+                                    levels = c('Only if reminded', 'Every Two Years', 'Annual', 
+                                           'More than Annually'))}
+
+survey$ReviewBusCov <- orderReview(survey$ReviewBusCov)
+survey$PersReviewCov <- orderReview(survey$PersReviewCov)
+
+# function for ordered factors understanding
+convertKnowledge <- function(x) {as.numeric(ifelse(x == 'Extremely well',  5, ifelse(
+    x == 'Quite well', 4, ifelse(x == 'Fairly well', 3,ifelse(
+        x == 'Mildly well', 2,ifelse(x == 'Not well at all', 1,NA))))))
+}
+
+for (i in 41:42) {survey[,i] <- convertKnowledge(survey[,i])}
+for (i in 57:58) {survey[,i] <- convertKnowledge(survey[,i])}
+
+
+
+singlePrice <- function(x) {x <- ifelse(x == 'Pay single price', x,'Pay per use')}
+
+survey$RatherPaySingleAnnualPrice <- singlePrice(survey$RatherPaySingleAnnualPrice)
+
+
+survey$RatherHaveSinglePolicyCoverMajor <- ifelse(survey$RatherHaveSinglePolicyCoverMajor =='Have a single policy that covers the majority of your needs',
+                                                  'Single Policy','Tailor coverages')
+
+
+survey$RatherTalkToPersonCoverBases <- ifelse(survey$RatherTalkToPersonCoverBases == 'Talk to a person to set up your insurance...I want to make sure I cover all my bases!',
+                                       'Talk to Person','Use web/app')
+
+
+# make a function to convert NAs to 0
+naToZero <- function (x) {
+    x[is.na(x)] <- 0
+    return(x)
+}
+
+# clean up HHI
+survey$HHI <- factor(survey$HHI, ordered = T)
+levels(survey$HHI)[levels(survey$HHI) =="$0 to $9 999"] <- '< $50K'
+levels(survey$HHI)[levels(survey$HHI) =='$10 000 to $24 999'] <- '< $50K'
+levels(survey$HHI)[levels(survey$HHI) =='$25 000 to $49 999'] <- '< $50K'
+levels(survey$HHI)[levels(survey$HHI) =='$50 000 to $74 999'] <- '$50K < $75K'
+levels(survey$HHI)[levels(survey$HHI) =='$75 000 to $99 999'] <- '$75K < $100K'
+levels(survey$HHI)[levels(survey$HHI) =='$100 000 to $124 999'] <- '$100K < $125K'
+levels(survey$HHI)[levels(survey$HHI) =='$125 000 to $149 999'] <- '$125K < $150K'
+levels(survey$HHI)[levels(survey$HHI) =='$150 000 to $174 999'] <- '$150K < $175K'
+levels(survey$HHI)[levels(survey$HHI) =='$175 000 to $199 999'] <- '$175K < $200K'
+levels(survey$HHI)[levels(survey$HHI) =='$200 000 and up'] <- '$200K+'
+
+# order the levels
+survey$HHI <- ordered(survey$HHI,
+                        levels = c('Prefer not to answer', '< $50K',
+                                   '$50K < $75K', '$75K < $100K', '$100K < $125K', '$125K < $150K',
+                                   '$150K < $175K', '$175K < $200K', '$200K+'))
+
+
+
+# change the age ranges to generations
+# change AgeRange to Generation
+survey$Generation <- factor(survey$AgeRange, ordered = T)
+levels(survey$Generation)[levels(survey$Generation) =='18 to 21'] <- 'Gen Z'
+levels(survey$Generation)[levels(survey$Generation) =='22 to 34'] <- 'Millennials'
+levels(survey$Generation)[levels(survey$Generation) =='35 to 44'] <- 'Gen X'
+levels(survey$Generation)[levels(survey$Generation) =='45 to 54'] <- 'Gen X'
+levels(survey$Generation)[levels(survey$Generation) =='55 to 64'] <- 'Boomers+'
+levels(survey$Generation)[levels(survey$Generation) =='65 to 74'] <- 'Boomers+'
+levels(survey$Generation)[levels(survey$Generation) =='75 or older'] <- 'Boomers+'
+
+survey$Generation <- ordered(survey$Generation, levels = c('Gen Z', 'Millennials', 'Gen X', 'Boomers+'))
+
+
+survey$Personal <- ifelse(survey$BusInsurance == 'I do not own a business','Personal','Bus Owners')
+
+
+# raname SplitCovCarrental
+names(survey)[names(survey) == 'SplitCovCarrental'] <- 'SplitCovCarRental'
+# names(surveyGender)[names(surveyGender) == 'SplitCovCarrental'] <- 'SplitCovCarRental'
+
+#######################################
+##  END OF DATA CLEANSING AND CODING
+
+
+# use this theme
+theme_bryan <- function () { 
+        theme(axis.text.x = element_text(size = 8, color = 'blue', angle = 90),
+              legend.position = 'right',
+              axis.text.y = element_text(color = 'blue'),
+              axis.title.x = element_blank(),
+              axis.title.y = element_blank(),
+              strip.text.x = element_text(size = 10, face = 'bold'),
+              strip.background = element_rect(fill = 'light blue'))
+}
+
+
+
+
+
+
+
+
+```
+## About Me
+
+- Current Role: Contract Data Scientist and Risk Modeling Support for Ultimate Risk Solutions (URS)
+
+ - Member Machine Learning Society ~ Boston Chapter
+    * Projects: AI & Computer Vision, Blockchain Development
+
+- Past Experience:
+- Extensive use of predictive modeling in my career
+- Data Science for last six years (more unstructured data than predictive modeling)
+    * Marketing Research, Banking Web Analytics & CRM, Insurance
+- Solvency II work in Europe
+- Cat/Risk Modeling
+
+
+## Topics
+- Survey Design and Data
+- Demographics
+- Behavioral aspects of customers
+- On-demand issues and factors
+- Text analytics
+- Wrap-up and questions
+
+## Survey Design Tips
+- Highly focused with no more than three key learning outcomes
+    * Set as binary variables
+    (I would buy again, I would recommened, I would consider, etc.)
+    * Quantify drivers with a model (GLMNET, Tree, Logistic Regression)
+- Open ends should encourage longer answers
+    * Good for text mining
+    * 'Bag of Words' models with Naive Bayes
+
+## Working with Survey Data
+ - Difficult/Expensive to get a large number of respondents
+    * 1046 Respondents; good for non-paid respondents
+ - Mix and match of numbers and words
+    * Requires a good bit of coding
+ - Back end of survey platforms can have hidden characters
+    * Can wreak havoc on factorization and text analytics
+
+
+## Survey Data - Post Cleaning Snapshot
+
+<center>
+![](~/Documents/DataSetsforDS/ConsumerSurvey/summary.png){ width=20% }
+</center>
+
+
+## Basic Demographics - Good Mix
+
+```{r Demographics, fig.height = 4.5, fig.width = 8}
+# let's look at some basic demographics
+# cut the data for later
+surveyGender <- survey %>%
+    filter(Gender != 'Other (specify)')
+
+g <- ggplot(survey, aes(x = Gender,
+                        fill = Generation)) + coord_flip() +
+    geom_bar(stat = 'count') + facet_wrap(~HHI) + 
+    theme_bryan()
+g
+
+
+```
+
+
+## Mobile-Friendly Survey
+```{r more}
+
+survey$Device <- ordered(survey$Device, levels = c('Windows Desktop / Laptop',
+                                                   'iOS Phone / Tablet',
+                                                   'Android Phone / Tablet',
+                                                   'MacOS Desktop / Laptop',
+                                                   'Other'))
+devices <- levels(as.factor(survey$Device))
+
+
+g <- ggplot(surveyGender, aes(x = Device,
+                        fill = Generation)) + coord_flip() +
+    geom_bar(stat = 'count') + facet_wrap(~Gender) + scale_x_discrete(limits = rev(devices)) +
+    theme_bryan()
+g
+```
+
+
+
+## Insurance is Complex - People Want Help
+```{r insurance is complex}
+answers <- levels(as.factor(survey$RatherTalkToPersonCoverBases))
+
+g <- ggplot(surveyGender, aes(x = RatherTalkToPersonCoverBases,
+                        fill = Generation)) + coord_flip() + scale_x_discrete(limits = rev(answers)) + 
+    geom_bar(stat = 'count') +  
+    theme_bryan()
+g
+
+```
+
+
+## Universal Message
+```{r breakdown talk}
+
+g <- ggplot(surveyGender, aes(x = Gender,
+                        fill = Generation)) + coord_flip() +
+    geom_bar(stat = 'count') + facet_wrap(~RatherTalkToPersonCoverBases) + 
+    theme_bryan()
+g
+
+```
+
+
+## Most People not Confident in Knowledge of Insurance
+
+```{r }
+# look at knowledge level
+knowledgeLevel <- surveyGender %>%
+    select(PersUnderstandAmtCov,
+           PersUnderstandPriced,
+           RateUnderstandBusCoverage,
+           RateUnderstandBusInsPrice,
+           Personal,
+           Gender,
+           Generation,
+           HHI)
+
+
+knowledgeMelt <- melt(knowledgeLevel,id = c('Gender', 'Generation', 'HHI', 'Personal'),
+                      variable.name = 'Question',
+                      value.name = 'Score')
+
+
+
+g <- ggplot(knowledgeMelt, aes(x = Question, y = Score,
+                               fill = Question)) + coord_flip(expand = T) + 
+    geom_boxplot(notch = F) + 
+    stat_summary(fun.y='mean', geom='point', shape = 23, size = 3, fill = 'white') + 
+    facet_wrap(~Personal) +
+    theme_bryan() + theme(legend.position = 'none')
+
+g
+
+```
+
+
+## Agent is Preferred Channel
+
+```{r agent}
+surveyGender <- survey %>%
+    filter(Gender != 'Other (specify)')
+
+# get a view of use agent
+g <- ggplot(surveyGender, aes(x = UseAgent,
+                           fill = Generation)) + coord_flip() +
+    geom_bar(stat = 'count') + facet_wrap(~Personal) + 
+    theme_bryan()
+g
+
+```
+
+
+## Reach Out and Touch Someone
+```{r reach out and touch}
+g <- ggplot(surveyGender, aes(x = Gender,
+                              fill = Generation)) + coord_flip() +
+    geom_bar(stat = 'count') + facet_wrap(~PersReviewCov) + 
+    theme_bryan()
+g
+```
+
+## Missed Opportunity - Transactional Relationship
+*Communication Focus is on Billing/Renewal Cycle* 
+
+```{r ReviewBusCoverage}
+
+surveyBus <- surveyGender %>%
+    filter(Personal == 'Bus Owners')
+
+g <- ggplot(surveyBus, aes(x = ReviewBusCov,
+                           fill = Gender)) + coord_flip() +
+    geom_bar(stat = 'count') + facet_wrap(~HHI) + 
+    theme_bryan() + theme(legend.position = 'bottom')
+g
+
+```
+
+## C Space's Customer Quotient (CQ)
+Move Companies Past Transactional Relationships
+![](~/Documents/DataSetsforDS/ConsumerSurvey/CQ.png)
+
+CQ was developed by Dr. Manila Austin at C Space
+
+
+## Home and Auto Most Important
+*Even for business respondents*
+
+```{r importance, echo = FALSE}
+important <- surveyGender %>% 
+    select(
+    ImportantAutomobile,
+    ImportantBoat,
+    ImportantCondoRenters,
+    ImportantDisability,
+    ImportantHomeowners,
+    ImportantOtherProperty,
+    ImportantMotorcycle,
+    ImportantRecreationalVeh,
+    ImportantPet,
+    ImportantCredit,
+    ImportantMortgage,
+    ImportantPersLiabilityUmbrella,
+    ImportantBusProperty,
+    ImportantBusCasualty,
+    ImportantWC,
+    Gender,
+    Generation,
+    HHI,
+    Personal)
+
+importantMelt <- melt(important, id = c('Gender', 'Generation', 'HHI', 'Personal'),
+                      variable.name = 'Question',
+                      value.name = 'Score')
+
+
+
+
+
+
+questions <- c('ImportantAutomobile',
+               'ImportantBoat',
+               'ImportantCondoRenters',
+               'ImportantDisability',
+               'ImportantHomeowners',
+               'ImportantOtherProperty',
+               'ImportantMotorcycle',
+               'ImportantRecreationalVeh',
+               'ImportantPet',
+               'ImportantCredit',
+               'ImportantMortgage',
+               'ImportantPersLiabilityUmbrella',
+               'ImportantBusProperty',
+               'ImportantBusCasualty',
+               'ImportantWC')
+
+
+meanOrder <- surveyGender %>%
+    summarise(Auto <- mean(ImportantAutomobile, na.rm = T),
+              Boat <- mean(ImportantBoat, na.rm = T),
+              Condo <- mean(ImportantCondoRenters, na.rm = T),
+              Dis <- mean(ImportantDisability, na.rm = T),
+              HO <- mean(ImportantHomeowners, na.rm = T),
+              Property <- mean(ImportantOtherProperty, na.rm = T),
+              Cycle <- mean(ImportantMotorcycle, na.rm = T),
+              RV <- mean(ImportantRecreationalVeh, na.rm = T),
+              Pet <- mean(ImportantPet, na.rm = T),
+              Credit <- mean(ImportantCredit, na.rm = T),
+              Mort <- mean(ImportantMortgage, na.rm = T),
+              Umb <- mean(ImportantPersLiabilityUmbrella, na.rm = T),
+              BusProp <- mean(ImportantBusProperty, na.rm = T),
+              BusCas <- mean(ImportantBusCasualty, na.rm = T),
+              WC <- mean(ImportantWC, na.rm = T)
+        )
+
+meanOrder <- t(meanOrder)
+
+matrixQuestions <- as.matrix(questions, meanOrder)
+
+orderQuestions <- as.data.frame(matrixQuestions)
+orderQuestions <- cbind.data.frame(orderQuestions, meanOrder)
+colnames(orderQuestions) <- c('questions', 'meanScore')
+
+orderQuestions <- arrange(orderQuestions, -meanScore)
+
+questions <-orderQuestions$questions
+
+g <- ggplot(importantMelt, aes(x = Question, y = Score,
+                            fill = Question)) + coord_flip(expand = T) + 
+    scale_x_discrete(limits = rev(questions)) +  
+    # geom_boxplot(notch=F) + 
+    geom_violin() +  
+    stat_summary(fun.y='mean', geom='point', shape = 23, size = 3, fill = 'white') + 
+    facet_wrap(~Personal) +
+    theme_bryan() + theme(legend.position = 'none',axis.text.y = element_blank())
+
+
+g1 <- ggplot(importantMelt, aes(x = Question, y = Score,
+                               fill = Question)) + coord_flip(expand = T) + 
+    scale_x_discrete(limits = rev(questions)) +  
+    geom_violin()  +
+    stat_summary(fun.y='mean', geom='point', shape = 23, size = 3, fill = 'white') + 
+    theme_bryan() + theme(legend.position = 'none') + labs(title='Product Importance',size = 8, face = 'bold')
+
+ggarrange(g1, g, nrow = 1, ncol = 2)
+
+
+```
+
+
+## Prix Fix with Choices
+*Split on the 'Bundle'*
+
+```{r single price tailor coverage}
+g1 <- ggplot(surveyGender, aes(x = RatherPaySingleAnnualPrice,
+                              fill = Generation)) + coord_flip() +
+    geom_bar(stat = 'count') + facet_wrap(~Gender) + 
+    theme_bryan() + theme(legend.position = 'none')
+
+g2 <- ggplot(surveyGender, aes(x = RatherHaveSinglePolicyCoverMajor,
+                              fill = Generation)) + coord_flip() +
+    geom_bar(stat = 'count') + facet_wrap(~Gender) + 
+    theme_bryan() + theme(legend.position = 'bottom')
+
+ggarrange(g1, g2, ncol = 1, nrow = 2)
+
+```
+
+## Businesses More Open to Split Coverage
+
+```{r split coverage}
+splitCoverage <- surveyGender %>%
+    select(SplitCovAccidents,
+           SplitCovAspectsWC,
+           SplitCovAspectsGL,
+           SplitCovCarRental,
+           SplitCovCyber,
+           SplitCovDrones,
+           SplitCovEarthquake,
+           SplitCovEquipmentBreakdown,
+           SplitCovHomeSharingAirBnB,
+           SplitCovHurricane,
+           SplitCovFlood,
+           SplitCovPersLiabilty,
+           SplitCovRideSharingUber,
+           SplitCovSpecificHomeBus,
+           SplitCovTornadoHailWinterstorm,
+           SplitCovNone,
+           SplitCovOther,
+           Gender,
+           Generation,
+           HHI,
+           Region,
+           Personal)
+           
+
+coverageMelt <- melt(splitCoverage,id = c('Gender', 'Generation', 'HHI', 'Personal', 'Region'),
+                      variable.name = 'Question',
+                      value.name = 'Score')
+
+
+g <- ggplot(coverageMelt, aes(x = reorder(Question, Score), y = Score, 
+                              fill = Gender)) + coord_flip() +
+    geom_bar(stat="identity") + facet_wrap(~Personal) + 
+    theme_bryan()
+g
+
+```
+
+
+## 24 Hr Claim Payment Not Valued
+*It could be a diffentiator*
+
+```{r pay extra}
+# plot the results of pay extra
+surveyGender$ExtraFor24HrPay <- ordered(surveyGender$ExtraFor24HrPay, levels = c(
+        'I wouldn’t do it.  At any cost',
+        'At most $10 (i.e. – 1% of total)',
+        'At most $50 (i.e. – 5% of total)',
+        'At most $100 (i.e. – 10% of total)',
+        'More than $100',
+        'Other (please explain)'
+        ))
+
+
+extra <- levels(surveyGender$ExtraFor24HrPay)
+
+g <- ggplot(surveyGender, aes(x = ExtraFor24HrPay,
+                              fill = Generation)) + coord_flip() +
+    geom_bar(stat = 'count') +  
+    scale_x_discrete(limits = rev(extra)) + 
+    theme_bryan() + theme(legend.position = 'bottom')
+g
+
+
+```
+
+## Insuretech Marketing Problem:
+*Little Uptake*
+```{r marketing}
+
+# purchase without Never Heard
+purchaseOnly <- surveyGender %>%
+    select(PurchaseFromAirsurety,
+           PurchaseFromCuvva,
+           PurchaseFromLemonade,
+           PurchaseFromMetromile,
+           PurchaseFromSlice,
+           PurchaseFromSure,
+           PurchaseFromSwyfft,
+           PurchaseFromTrov,
+           PurchaseFromVerifly,
+           HHI,
+           Personal,
+           Gender,
+           Generation,
+           Region)
+
+purchaseOnlyMelt <- melt(purchaseOnly, id = c('Gender', 'Generation', 'HHI', 'Personal', 'Region'),
+                         variable.name = 'Question',
+                         value.name = 'Score')
+
+g1 <- ggplot(purchaseOnlyMelt, aes(x = reorder(Question, Score), y = Score, 
+                              fill = Personal)) + coord_flip() +
+    geom_bar(stat="identity") + facet_wrap(~Gender) + 
+    theme_bryan() + theme(legend.position = 'bottom')
+
+
+g2 <- ggplot(purchaseOnlyMelt, aes(x = reorder(Question, Score), y = Score, 
+                                  fill = Gender)) + coord_flip() +
+    geom_bar(stat="identity") + facet_wrap(~Personal) + 
+    theme_bryan() + theme(legend.position = 'bottom', axis.text.y = element_blank())
+
+ggarrange(g1, g2, ncol = 2, nrow = 1)
+
+```
+
+## No One Knows Who You Are
+
+```{r no never heard}
+# look at the purchase from others
+purchase <- surveyGender %>%
+    select(NeverHeard,
+           PurchaseFromAirsurety,
+           PurchaseFromCuvva,
+           PurchaseFromLemonade,
+           PurchaseFromMetromile,
+           PurchaseFromSlice,
+           PurchaseFromSure,
+           PurchaseFromSwyfft,
+           PurchaseFromTrov,
+           PurchaseFromVerifly,
+           HHI,
+           Personal,
+           Gender,
+           Generation,
+           Region)
+
+# consideration
+
+purchase$NeverHeard <- as.numeric(ifelse(purchase$NeverHeard == 'I\'ve never heard of any of these',1,0))
+
+purchaseMelt <- melt(purchase, id = c('Gender', 'Generation', 'HHI', 'Personal', 'Region'),
+                     variable.name = 'Question',
+                     value.name = 'Score')
+
+
+purchaseMelt$Score <- as.numeric(purchaseMelt$Score)
+
+g <- ggplot(purchaseMelt, aes(x = reorder(Question, Score), y = Score, 
+                              fill = Personal)) + coord_flip() +
+    geom_bar(stat="identity") + facet_wrap(~Gender) + 
+    theme_bryan()
+g
+```
+
+## Privacy Concerns Prevent Alternative Rating
+
+```{r privacy}
+
+# clean up some columns
+names(surveyGender)[names(surveyGender) == 'DataShareContactslist(phoneonly)'] <-
+    'DataSharePhoneContacts'
+
+names(surveyGender)[names(surveyGender) == 'DataShareDrivingbehaviors(speed acceleration commutetime etc.)'] <-
+    'DataShareDrivingBehaviors'
+
+
+# get the data now
+data <- surveyGender %>%
+    select(DataSharePhoneContacts,
+           DataShareDrivingBehaviors,
+           DataShareExerciseActivity,
+           DataShareFacebook,
+           DataShareTwitter,
+           DataShareLanguagesSpoken,
+           DataShareLinkedIn,
+           DataShareLocationGPS,
+           DataShareWebsitesVisited,
+           DataShareOnlinePurchasesAmazon,
+           DataShareYourBodyTemperature,
+           DataShareYourHeartRate,
+           DataShareYourSleepActivity,
+           Generation,
+           Gender,
+           Personal,
+           Region,
+           HHI)
+
+
+# get a count of none
+data$ShareNone <- wordToOne(surveyGender$DataShareNoneOpen)
+
+# melt it for plotting
+
+dataMelt <- melt(data, id = c('Gender', 'Generation', 'HHI', 'Personal', 'Region'),
+                 variable.name = 'Question',
+                 value.name = 'Score')
+
+g <- ggplot(dataMelt, aes(x = reorder(Question, Score), y = Score, 
+                          fill = Generation)) + coord_flip() +
+    geom_bar(stat="identity")  + 
+    theme_bryan() + theme(legend.position = 'none') + 
+    labs(title='Data Sharing',size = 8, face = 'bold')
+
+g1 <- ggplot(dataMelt, aes(x = reorder(Question, Score), y = Score, 
+                          fill = Generation)) + coord_flip() +
+    geom_bar(stat="identity") + facet_wrap(~Gender) + 
+    theme_bryan() + theme(legend.position = 'right', axis.text.y = element_blank())
+
+ggarrange(g, g1, ncol = 2, nrow = 1)
+
+
+```
+
+## Businesses Want Easily Quantifiable Factors
+
+```{r}
+# how want insurance priced business
+# clean up some columns
+names(surveyGender)[names(surveyGender) == 'PriceNumberofemployees'] <-
+    'PriceNumberofEmployees'
+
+names(surveyGender)[names(surveyGender) == 'PriceHoursopen'] <-
+    'PriceHoursOpen'
+
+
+surveyGender$Personal <- as.factor(surveyGender$Personal)
+surveyGender$Region <- as.factor(surveyGender$Region)
+
+surveyGender$PriceOther <- wordToOne(surveyGender$PriceOther)
+
+
+
+pricing <- surveyGender %>%
+    filter(Personal == 'Bus Owners') %>%
+    select(PriceMilesDriven,
+           PriceNumberofEmployees,
+           PriceHoursOpen,
+           PriceAnnualRevenue,
+           PriceAnnualPayroll,
+           PriceProjectBasedRevenue,
+           PriceProjectBasedPayroll,
+           PricePerDayofOperation,
+           PriceIndustryPoolNotIndividualBasedMetric,
+           PriceTechBasedDataCellPhoneUsage,
+           PriceRestaurantRating,
+           PriceOther,
+           Personal,
+           Region
+           )
+
+totalBusiness <- length(pricing$Personal)
+
+pricingPercent <- surveyGender %>%
+    group_by(Region) %>%
+    filter(Personal == 'Bus Owners') %>%
+    summarize(MilesDriven = sum(PriceMilesDriven)/totalBusiness,
+              NumberEmployees = sum(PriceNumberofEmployees)/totalBusiness,
+              HoursOpen = sum(PriceHoursOpen)/totalBusiness,
+              AnnualRevenue = sum(PriceAnnualRevenue)/totalBusiness,
+              AnnualPayroll = sum(PriceAnnualPayroll)/totalBusiness,
+              ProjectBasedRevenue = sum(PriceProjectBasedRevenue)/totalBusiness,
+              ProjectBasedPayroll = sum(PriceProjectBasedPayroll)/totalBusiness,
+              PerDayofOperation = sum(PricePerDayofOperation)/totalBusiness,
+              IndustryPool = sum(PriceIndustryPoolNotIndividualBasedMetric)/totalBusiness,
+              CellPhoneUsage = sum(PriceTechBasedDataCellPhoneUsage)/totalBusiness,
+              RestaurantRating = sum(PriceRestaurantRating)/totalBusiness,
+              Other = sum(PriceOther)/totalBusiness
+    )
+
+
+pricing$PriceOther <- wordToOne(pricing$PriceOther)
+
+
+pricingMelt <- melt(pricingPercent, id = c('Region'),
+                 variable.name = 'Question',
+                 value.name = 'Score')
+
+g <- ggplot(pricingMelt, aes(x = reorder(Question, Score), y = Score)) + coord_flip() +
+    geom_bar(stat="identity", fill = 'blue') + theme_bryan() + scale_y_continuous(labels = percent)
+g
+
+```
+
+## Text Analytics
+
+- Need rich text
+    * We have lots of short answers
+- tf-idf (term frequency-inverse document frequency) refelct importance of a word
+- tf is raw number of times a word shows up count/(words in document)
+- idf is the log of ratio of documents that include a give word, higher ratio, lower value 
+
+
+## Who Likes the Same Things?
+
+![](~/Documents/DataSetsforDS/ConsumerSurvey/RegionLikeDendrogram.png)
+
+<!-- put at bottom of figure -->
+\begin{figure}
+\centerline{\includegraphics[width=0.5\textwidth]{RegionDendrogram.png}}
+\end{figure}
+
+
+## Verbatims - Like
+
+My current provider has clear, concise reporting of the detailed breakdown of the costs and coverage of my insurance products. - **Central**
+
+They give good prices and almost every type of insurance we use comes from one places. - **Mountain**
+
+Ease of access to an informed person within the insurance company - **New England**
+
+The freedom of picking which items to cover - **Mid Atlantic**
+
+Low price for what I get - **Pacific**
+
+Coverage in event of catastrophe - **South Atlantic**
+
+
+##
+
+![](~/Documents/DataSetsforDS/ConsumerSurvey/5WordLikeCompare.png)
+
+
+##
+
+![](~/Documents/DataSetsforDS/ConsumerSurvey/2WordLikeCompare.png)
+
+
+
+
+## Who Wants Same Improvements?
+
+![](~/Documents/DataSetsforDS/ConsumerSurvey/RegionDendrogramImproveNew.png)
+
+<!-- put at bottom of figure -->
+\begin{figure}
+\centerline{\includegraphics[width=0.5\textwidth]{RegionDendrogramImproveNew.png}}
+\end{figure}
+
+
+## Verbatims - Needs Improvement
+My insurance representative does not care at all. - **Pacific**
+
+Constant pricing increases - **South Atlantic**
+
+Bigger discounts for never having a single claim in 20+ years. - **Central**
+
+I would like to see better pricing and the ability to pay less on a vehicle that's not being used regularly. IE motorcycle in a garage during the winter months - **Mountain**
+
+I never ever use it/ report a claim yet see no discounts or refunds - **New England**
+
+No hidden cost  simple language rather than flavor language - **Middle Atlantic**
+
+##
+![](~/Documents/DataSetsforDS/ConsumerSurvey/5WordImproveCompare.png)
+
+
+##
+![](~/Documents/DataSetsforDS/ConsumerSurvey/2WordImproveCompare.png)
+
+
+
+
+
+## What They Like
+
+![](~/Documents/DataSetsforDS/ConsumerSurvey/New2wordLikeCloud.png){ width=20% }
+
+
+
+## What They Don't Like
+
+![](~/Documents/DataSetsforDS/ConsumerSurvey/2wordImproveCloudNew.png){ width=20% }
+
+## What did we learn?
+
+- The contract nature of insurance makes it harder to purchase online
+    * People don't feel confident in their knowledge
+    * Therefore, they use an agent who generally does not offer alternative products
+- 24 Hr Claim Payment is not something people will pay for
+- Insurance is too transactional
+- There is limited awareness of insurtech products
+    * Not in the main distribution channel
+    * Resulting in Little Uptake
+- Privacy Concerns will limit alternative rating
+    * Business want 'hard' factors
+    
+
+
+
+
+
+
+
+
