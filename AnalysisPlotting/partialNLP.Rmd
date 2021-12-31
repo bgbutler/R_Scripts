@@ -1,0 +1,358 @@
+---
+title: "Text Analytics/NLP"
+author: "Bryan Butler"
+date: "3/9/2021"
+output:
+    html_document:
+    toc: false
+    toc_depth: 1
+    fig_crop: no
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+library(reticulate)
+knitr::knit_engines$set(python = reticulate::eng_python)
+knitr::opts_chunk$set(echo = FALSE, warning= FALSE, error =TRUE, message = FALSE, cache.lazy = FALSE, comment=NA, fig.width=10, fig.height=8)
+# use_condaenv('timeseries')
+```
+
+
+# {.tabset .tabset-fade .tabset-pills}
+
+
+<style>
+  .main-container {
+    max-width: 1200px !important;
+    margin-left: auto;
+    margin-right: auto;
+  }
+</style>
+
+
+```{python importLibaries, echo=FALSE}
+# Base libraries
+import PyQt5
+
+# Standard imports
+import sys
+import warnings
+warnings.simplefilter('ignore')
+import os
+import pandas as pd
+import numpy as np
+pd.pandas.set_option('display.max_columns', None)
+pd.options.display.float_format  = '{:,.2f}'.format
+
+pd.options.display.max_colwidth= 2000
+pd.set_option('display.max_rows', 100)
+
+
+# plotting
+import textwrap
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# improve with plotly
+import plotly.offline as pyo
+from plotly.offline import iplot, init_notebook_mode
+import plotly.graph_objs as go
+from plotly.offline import init_notebook_mode
+
+# get UMAP for dimension reduction
+import umap
+
+
+# for dendograms
+from scipy.cluster.hierarchy import dendrogram, linkage
+from scipy.cluster import hierarchy
+
+# get the lDA algorithm
+from sklearn.decomposition import LatentDirichletAllocation
+from sklearn.model_selection import GridSearchCV
+
+# text libraries
+import nltk
+from wordcloud import WordCloud, STOPWORDS# preprocessing prior to lda
+from sklearn.feature_extraction.text import CountVectorizer
+from nltk.sentiment.vader import SentimentIntensityAnalyzer
+
+# use the TF-IDF vectorizor to give more weight to rare words
+# TF-IDF specific setup
+from sklearn.feature_extraction.text import TfidfVectorizer
+
+# set seed for reproducibility
+SEED = 42
+
+
+
+```
+
+```{python}
+
+# print('Seaborn Version: ', sns.__version__)
+
+```
+
+
+```{python}
+# TF imports
+import tensorflow_hub as hub
+import tensorflow as tf
+```
+
+
+```{python}
+# Load the GUSE model
+
+guse = hub.load("https://tfhub.dev/google/universal-sentence-encoder/4")
+```
+
+
+```{python, echo=FALSE}
+# get the data
+data = pd.read_csv('Transaction_Survey.csv', low_memory=False)
+```
+
+
+```{python}
+# regroup the OS
+
+def get_os(row):
+    if pd.isnull(row):
+        return 'None'
+    elif "Android" in row:
+        return row[0:10]
+    else:
+        return row[0:7]
+        
+        
+        
+data['OS_Group'] = data['OS'].apply(get_os)
+
+# remove the extra periods
+data['OS_Group'] = data['OS_Group'].str.replace('.', '')
+
+```
+
+
+```{python}
+text = data[['Please say more.', 'OS_Group']]
+
+# rename the column
+text.columns = ["Comments", 'OS']
+
+# lots of NaN only get clean text
+df = text[text['Comments'].notna()]
+
+```
+
+## Bigrams
+```{python, echo=FALSE, warning=FALSE, message=FALSE}
+# max_df - discard words that show up in x percent of documents has a scale 0 - 1
+# min_df - is the opposite, minimum frequency can be a percent or raw number of documents
+# ngram_range is normally (1,1) for single words, 2,2, for bigrams
+
+cv = CountVectorizer(max_df = 0.95, min_df=2, stop_words='english', ngram_range=(2, 2))
+
+
+# make document term matrix
+dtm = cv.fit_transform(df['Comments'])
+
+# convert to dataframe for clustering
+bow = pd.DataFrame(dtm.toarray(), columns = cv.get_feature_names())
+
+
+bow['OS'] = df['OS']
+
+# collapse it down
+osDf = bow.groupby(['OS']).sum()
+
+# Calculate the distance between each sample
+Z = linkage(osDf, 'ward')
+
+# get the OS as a list
+l = list(osDf.index)
+
+# Make the dendrogram
+# # Set the colour of the cluster here:
+# hierarchy.set_link_color_palette(['#b30000','#996600', '#b30086'])
+# colors = ["#2A66DE", "#E88202", "#2A66DE", "#E88202"]
+hierarchy.set_link_color_palette(["#2A66DE", "#E88202"]) 
+
+# set the threshold to color
+t = 2.0
+
+plt.figure(figsize=(14,8))
+dendrogram(Z, labels=l, leaf_rotation=0, leaf_font_size=12,
+           orientation="left",
+           color_threshold=t,
+           above_threshold_color="#180A47")
+plt.axvline(x=t, c='green', lw=1, linestyle='dashed')
+plt.title('Dendrogram of Phrases by OS')
+plt.xlabel('OS')
+plt.ylabel('Euclidean Distance')
+plt.show();
+
+```
+
+
+## Topic Modeling
+```{python, echo=FALSE, warning=FALSE, message=FALSE}
+# function to do a grid search of params
+def cv_lda(data_in):
+    search_params = {'n_components':[4, 6, 8], "learning_decay":[0.3, 0.5, 0.7]}
+    
+    # initialize model
+    LDA = LatentDirichletAllocation(random_state = SEED)
+    
+    # init grid search class
+    model = GridSearchCV(LDA, param_grid = search_params).fit(data_in)
+    
+    # return best model
+    print("Best Model's Params: ", model.best_params_)
+    print("\nBest Log Likelihood: ", model.best_score_)
+    print("\nBest Perplexity: ", model.best_estimator_.perplexity(data_in))
+    model.best_estimator_
+
+
+
+LDA = LatentDirichletAllocation(n_components=4, random_state=SEED, learning_decay=0.3)
+LDA.fit(dtm)
+
+# get one topic
+single_topic = LDA.components_[0]
+
+
+# take a look
+top_twenty_words = single_topic.argsort()[-20:]
+
+# get thet top 20
+for index in top_twenty_words:
+    print(cv.get_feature_names()[index])
+
+```
+
+
+```{python}
+for index,topic in enumerate(LDA.components_):
+    print(f'THE TOP 20 BIGRAMS WORDS FOR TOPIC #{index}')
+    print([cv.get_feature_names()[i] for i in topic.argsort()[-20:]])
+    print('\n')
+
+topic_results = LDA.transform(dtm)
+
+
+# get the first row, has probabilities of each topic
+# topic_results[0].round(2)
+
+
+# get index position of highest probability
+# use it to assign the topic to the phrases
+
+# topic_results[0].argmax()
+
+# create a column for the topic assignment
+
+df['Topic'] = topic_results.argmax(axis=1)
+
+# map with words this is just a high level pass you'll have to study it more
+mytopic_dict = {0:'online banking',1:'app use',2:'experience',3:'eastern bank',}
+
+df['Topic Label'] = df['Topic'].map(mytopic_dict)
+df.head(20)
+
+```
+
+
+## Topic Plot
+```{python}
+# Generate the TF-IDF vectors
+# this is the same step as earlier with the count vectorizer
+vectorizer_tfidf = TfidfVectorizer(max_features=10000, ngram_range = (2,2))
+vectors_tfidf = vectorizer_tfidf.fit_transform(df.Comments)
+
+# Generate the TF-IDF dimension reduction
+embedding_tfidf = umap.UMAP(random_state=SEED).fit_transform(vectors_tfidf)
+
+def enable_plotly_in_cell():
+  import IPython
+  display(IPython.core.display.HTML('''<script src="/static/components/requirejs/require.js"></script>'''))
+  init_notebook_mode(connected=False)
+  
+  
+# set up plotting
+df['x'] = embedding_tfidf[:,0]
+df['y'] = embedding_tfidf[:,1]
+
+
+# Wrap the text so it displays nicely in Plotly hover
+df['wrap'] = df['Comments'].map(lambda x: '<br>'.join(textwrap.wrap(x, 64)))
+
+# enable_plotly_in_cell()
+DIMENSION = 'Topic'
+
+layout = go.Layout(
+    autosize=False,
+    width=600,
+    height=600,
+    hovermode="closest",
+    xaxis = {'showticklabels': False},
+    yaxis = {'showticklabels': False}
+)
+
+data = [go.Scatter(
+                x=df.x,
+                y=df.y,
+                text=df.wrap,
+                mode='markers',
+                marker=dict(
+                        size=6,
+                        colorscale='viridis',
+                        color=df[DIMENSION],
+                        showscale=True
+                )
+                )]
+
+fig = go.Figure(data=data, layout=layout)
+
+# iplot(fig)
+pyo.plot(fig)
+```
+
+
+
+
+
+
+## Sentiment Analysis
+```{python}
+# instantiate sentiment engine
+sid = SentimentIntensityAnalyzer()
+
+# apply the sentiment analyzer
+df['scores'] = df['Comments'].apply(lambda review: sid.polarity_scores(review))
+
+# compound scores
+df['compound'] = df['scores'].apply(lambda d:d['compound'])
+
+
+# add some context
+# you can choose scores fore neutral (-1 to 1 or something like that)
+def sentiment_score(row):
+    if row > .25:
+        return 'Pos'
+    elif row < -.25:
+        return 'Neg'
+    else:
+        return "Neu"
+
+df['sentiment'] = df['compound'].apply(sentiment_score)
+df.head(10)
+
+p = sns.displot(
+    df, x="sentiment", col="Topic Label",
+    binwidth=3, height=3, facet_kws=dict(margin_titles=True),
+)
+p
+```

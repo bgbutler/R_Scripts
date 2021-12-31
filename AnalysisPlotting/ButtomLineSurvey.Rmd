@@ -1,0 +1,598 @@
+---
+title: "BottomLine Survey"
+author: "Bryan Butler"
+date: "12/3/2020"
+output:
+    html_document:
+    toc: false
+    toc_depth: 1
+    fig_crop: no
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+
+knitr::opts_chunk$set(echo = FALSE, warning= FALSE, error =FALSE, message = FALSE, cache.lazy = FALSE, comment=NA, fig.width=10, fig.height=8)
+```
+
+
+# {.tabset .tabset-fade .tabset-pills}
+
+
+<style>
+  .main-container {
+    max-width: 100% !important;
+    margin-left: auto;
+    margin-right: auto;
+  }
+</style>
+
+
+
+```{r, echo=FALSE}
+read_chunk('C:/Users/bbutler/Documents/DataScience/NLP/SurveyAnalysis.R')
+
+```
+
+
+
+```{r loadlibraries, echo=FALSE}
+# set java for rJava
+Sys.setenv(JAVA_HOME='C:\\Program Files\\Java\\jdk1.8.0_251\\jre')
+
+
+
+library(ggplot2)
+library(reshape2)
+library(scales)
+library(SnowballC)          # Porter's word stemming
+library(tm)                 # Text Cleaning and Processing
+library(RTextTools)         # Automatic Text Classification via Supervised Learning
+library(stringi)            # For processing strings
+library(wordcloud)          # Plot word clouds
+library(RWeka)              # Machine Learning Java Library for Tokenization
+library(tidytext)           # Additional Text Processing Library (new from RStudio)
+library(tidyr)              
+library(knitr)
+library(dendextend)         # Making Dendograms
+
+library(qdapRegex)          # function to remove words less than 3 letters
+library(readr)
+library(stringr)
+library(textclean)
+library(forcats)
+library(topicmodels)
+
+
+# Modeling Libraries
+library(caret)
+library(Metrics)
+library(pROC)
+library(naivebayes)         # Naive Bayes package
+library(klaR)               # Alternative NB package
+library(e1071)              # Windows specific modeling package best NB package
+library(caTools)            # Utility function to help modeling split
+library(randomForest)
+library(RColorBrewer)
+library(GGally)
+library(dplyr)
+library(lime)
+
+```
+
+
+
+```{r getData}
+
+```
+
+
+```{r cleanData}
+
+```
+
+
+
+```{r dataFunctions}
+
+```
+
+
+
+```{r plotFunctions}
+
+```
+
+
+## Overview
+### - 200 Small Business and Commercial customers that had a transaction on the online platform during a 60 day period were asked to rate their experience.
+### - Two Satisfaction metrics were calculated: Overall on a scale of 0 - 10, and ELI which measures Emotion, Effort & Efficiency on a 0 - 7 scale for each metric.
+### - Overall satisfaction is considered in the passive range (6 - 7) out of 0 - 10 scale
+### - ELI scores in range 4 - 5 out of 0 - 7 scale
+### - The key phrase or theme is 'Not easy to Navigate'
+### - While satisfaction is medium, comments reflect an overall lower satisfaction as the comments from the lowest scores are similar to the medium scores
+### - Overall Satisfaction score, Emotion, Effort & Efficiency are all highly correlated (.85 - .89)
+### - Resolution of satisfaction drivers to Emotion, Effort & Efficiencyt does not provide additional value/information
+### - The four questions are duplicative and can be used to asked other questions.
+### - Survey might not be asking the right questions; it's more focused on inidividual transactions vs usability
+### - Small Business segment less happy with system than Corporate; most likely to be active users
+### - Bill Pay and Navigation are key problem areas
+
+
+
+
+
+
+
+## Data Correlations
+### - Overall Satisfaction (OSAT), Emotion, Efficiency and Effort are highly correlated .85+
+### - Generally need just one metric due to high correlation
+### - OSAT is on 10 pt scale, Emotion, Efficiency, and Effort on a 7 pt scale
+```{r checkCorrelations}
+
+```
+
+
+## OSAT Plots
+### <strong><font color="blue">Overall Satisfaction by Segment</font></strong>
+### - Small Business segment less satisfied than Corporate
+### - Small Business scores contain 0,1,2 - worst scores
+### - Both segments have a large portion between 5 - 7
+```{r osatPlots}
+
+```
+
+### <strong><font color="blue">Question : Join User Community</font></strong>
+### - Will get reasonable spread of opinions from both groups in a user community
+### - Corporate segment that is happiest, is not interested in helping; strong participation from the middle
+```{r osatJoin}
+```
+
+
+## Frequency of Use
+### <strong><font color="blue">Questions about use of various tasks/services and OSAT</font></strong>
+### - Account Transfer common task with medium satisfaction
+```{r osatAcctTransfer}
+
+```
+
+### - ACH Origintion high satisfaction with regular users
+```{r osatAch}
+
+```
+
+### - Balance & Transaction Reporting haS a wide range of satisfaction, includine zero
+```{r osatBal}
+
+```
+
+### - SMB not happy with Bill Pay
+### - Corporate satisfaction highest with those who never use teh service.
+```{r osatBillPay}
+
+```
+
+
+### - Positive Pay best performing serice
+```{r osatPositive}
+
+```
+
+
+### - Satisfaction with loans highest with Occasional users
+```{r osatLoans}
+
+```
+
+
+## Efficiency
+### <strong><font color="blue">Score of Efficency relative to satisfaction with various transactions/services</font></strong>
+### - Due to high correlation with Effort and Emotion, other plots would mirror these very closely.
+### - Corporate segment does not use loan service
+```{r efficiencyPlots}
+
+```
+
+### - Corporate more satisfied with Account Transfers
+### - SMB has a larger portion more Neutral and Dissatisfied
+```{r effAccount}
+
+```
+
+### - ACH Origination generally used by corporate
+```{r effAch}
+
+```
+
+### - Transaction Balance & Reporting not scoring well
+```{r effTrans}
+
+```
+
+### - SMB not happy with Bill Pay
+```{r effBillPay}
+
+```
+
+
+## Tempkin Experience Components
+### <strong><font color="blue">Transaction/Service rating by Effort</font></strong>
+### - Corporate rating of 5, SMB 4.5
+```{r effortSat}
+
+```
+
+### - Efficiency (near direct reflection of Effort)
+```{r efficiencySat}
+
+```
+
+### - Emotion scores slightly lower
+```{r emotionSat}
+
+```
+
+
+## Machine Learning Model
+### - Dependent Variable is high OSAT (> 8)
+### - Model is using classification vs regression; not predicitng the score
+### - Only siginificant variables are Total Account, Balance & Transaction Reporting and Loans
+### - Might not be asking the key questions that drive satisfaction
+### - Significant holes in data - used row averages to fill in
+```{r modelOsat}
+
+```
+
+
+### - Balance & Transaction Reporting is biggest driver (also negative coefficient)
+```{r modelVarImp}
+
+```
+
+### - Model is 88% Accurate
+### - Erros more on false negatives
+```{r modelMatrix}
+
+```
+
+### - High ROC of .93, range is 0.5 to 1.0
+### - High ROC due to very little false positives
+```{r modelAuc}
+
+```
+
+
+## Reduced model
+### - Reduce model to key variables
+### - Account Transfers seems to reduce noise
+```{r reducedModel}
+
+```
+
+
+```{r redModelSummary}
+
+```
+
+### - Order of significance unchanged
+### - Balance & Transaction Reporting is biggest driver
+```{r redModelVarImp}
+
+```
+
+
+###  - More accurate (slightly) due to less noise
+```{r redModelMatrix}
+
+```
+
+### - Retains High ROC value
+### - Less false negatives (other questions generally pushed predictions of negatives)
+```{r redModelAuc}
+
+```
+
+
+## Model Incrementals
+### <strong><font color="blue">Average Scores for High Sat and Low Sat</font></strong>
+### - Largest difference in Balance & Transaction Reporting (6.22 vs 3.68)
+### - On a scale of 0 - 10, average rating of a HighSat overall score has a score of 6.22 for Balance & Transaction Reporting
+```{r modelValues}
+
+```
+
+
+### - Average scores yield high separation
+```{r redModelHigh}
+
+```
+
+
+```{r redModelLow}
+
+```
+
+### - Test cases run through model
+### - All are high probabilities
+### - Explanation of fit is very high (close to 0.7)
+```{r lime}
+
+```
+
+
+## Word Clusters
+### <strong><font color="blue">Clusters reflect similarity of comments by OSAT Score</font></strong>
+### - Expect 8,9, 10 to be similar
+### - Presence of 0,1,2 in the middle of mid-Satisfaction is concerning; either love it or hate it, not much in between, comments are similar for very low 0,1, and 6,7
+```{r textAnalytics, echot=T}
+
+```
+
+
+
+```{r clusterOSAT, echot=T}
+
+```
+
+
+### - Effort shows the same issue - generally two themes
+```{r clusterEffort, echot=T}
+
+```
+
+### - Efficiency widens; 6 and 7 are not near earch other
+```{r clusterEfficiency, echot=T}
+
+```
+
+### - Three themes in emotion
+```{r clusterEmotion, echot=T}
+
+```
+
+
+## Key Phrases
+### <strong><font color="blue">Question: Please Explain Rating</font></strong>
+### - Part of high satisfaction is the result of employees and support not platform
+### - Dissatisfied people don't like the UI
+### - Neutral shows an issue with Quickbooks
+### - Satisfaction cut at 3,5,8 (segment excludes lower value)
+```{r textTokenize}
+
+```
+
+
+```{r tokenizeOsat}
+
+```
+
+
+### <strong><font color="blue">Question: Needs Improvement</font></strong>
+### - Emotion cut to include 6 and 7 as Promoter
+### - Despite high scores, Promoters have issues with reporting
+### - Others have issues with viewing transactions
+### - Competitors (Coastal Heritage Bank)
+### - Overall UI needs significant improvement
+```{r tokenizeEmotion}
+
+```
+
+
+### <strong><font color="blue">Question: Make it more Effortless vs Effort</font></strong>
+### - No comments from ratings of 6 or 7 in Effort
+### - Not well organized layout; not intuitive
+### - Need a sorting function
+```{r tokenizeEffort}
+
+```
+
+### <strong><font color="blue">Efficiency vs Needs Improvement</font></strong>
+### - Efficency score 6,7 are Promoters
+### - Lack of weekend support; needs an automated password reset
+### - Not enough detail in payments
+### - Issue with date ranges in Loan section
+### - Bill Pay area problematic
+```{r tokenizeEfficiency}
+
+```
+
+
+
+## Topic Modeling
+### <strong><font color="blue">Needs Improvement Topics</font></strong>
+### - Use Latent Dirichlet Allocation (LDA) for topics
+### - Each comment can have multiple topics, each topic is  mixture of words, and same words can be used across topics
+### - 6 Topics: General Reporting (1), Specific Page Issues(2),Password and Payments (3), Excel integration (4), Not User Friendly (5), Access & Interface (6)
+```{r checkTopicsImprove}
+
+```
+
+### <strong><font color="blue">More Effortless Topics</font></strong>
+### - Features not easy to navigate(1), Deposit & Transaction Issues(2), Need search functionality(3), Not intuitive (4), Should resemble the retail/home platform(5), Customer Service and user ID issues (6)
+```{r checkTopicsEffortless}
+
+```
+
+
+
+## Word Associations
+### - Shows words correlated with various keywords by frequency within the statements
+### - 'Not easy' seems to describe the overall system with 'Explain Rating'
+```{r wordAssoc1}
+
+```
+
+### - Black lives matter comments seem to be associated with Braintree (not widespread) in 'Explain rating'
+```{r wordAssoc2}
+
+```
+
+### - People dealt a fair amount with customer service, generally with good results in 'Explain Rating'
+```{r wordAssoc3}
+
+```
+
+### - Online Banking uses in 'More Effortless'
+### - Dififcult to navigate
+```{r wordAssoc4}
+
+```
+
+### - Monthly tasks showed up in 'Need Improvement'
+```{r wordAssoc5, fig.width=10, fig.height=16}
+
+```
+
+
+## BoW Model
+### - Use traditional Naive Bayes to find key phrases that drive OSAT
+### - Two-word phrases are the variables to the model
+### - overall 'easy use' was key phrase (generally with not)
+```{r naiveBayes}
+
+```
+
+
+```{r nbAuc}
+
+```
+
+
+```{r nbCM}
+
+```
+
+
+
+```{r nbPlot1}
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
