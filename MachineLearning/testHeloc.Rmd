@@ -1,0 +1,304 @@
+---
+title: "TestHeloc"
+author: "Bryan Butler"
+date: "9/1/2020"
+output:
+    html_document:
+    toc: false
+    toc_depth: 1
+    fig_crop: no
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+
+knitr::opts_chunk$set(echo = FALSE, warning= FALSE, error =FALSE, message = FALSE, cache.lazy = FALSE, comment=NA, fig.width=10, fig.height=8)
+```
+
+
+# {.tabset .tabset-fade .tabset-pills}
+
+
+<style>
+  .main-container {
+    max-width: 1250px !important;
+    margin-left: auto;
+    margin-right: auto;
+  }
+</style>
+
+
+
+
+
+```{r loadlibraries, echo=FALSE}
+# heloc map
+
+library(tidyverse)
+library(DT)
+library(leaflet)
+library(zipcode)
+library(reshape2)
+library(RColorBrewer)
+library(ggmap)
+library(ggplot2)
+library(scales)
+
+library(gridExtra)
+library(tidytext)
+
+library(plotly)
+
+library(dplyr)
+library(htmltools)
+
+library(markovchain)
+library(dendextend)
+
+# disable scientific notation
+options(scipen=999)
+
+# set wd
+setwd('Z:/Client Analytics and Product Discovery/ANALYTICS_PROJECTS/ZDriveHELOC')
+
+# get the final data file
+heloc <- readr::read_csv('helocCampaignBAU.csv')
+branches <- readr::read_csv('BranchData.csv')
+
+
+# change the lan lon for branches
+heloc <- heloc %>% rename(BranchLon = Longitude)
+heloc <- heloc %>% rename(BranchLat = Latitude)
+
+# geocode property
+# check NA for PropertyAdd
+# paste("Missing", sum(is.na(heloc$PropertyAdd)), "addresses ", sep=" ")
+
+# drop missing addresses
+helocAdd <- heloc %>% filter(!is.na(PropertyAdd))
+
+```
+
+
+
+```{r cleanData}
+# map the zipcode 
+data(zipcode)
+
+
+# clean zipcodes
+helocAdd$propertyZip <- clean.zipcodes(helocAdd$propertyZip)
+
+# get the data on zips
+mapData <- merge(helocAdd, zipcode, by.x = 'propertyZip', by.y = 'zip')
+
+# get lat and lon for property
+# change the lan lon for branches
+mapData <- mapData %>% rename(propertyLon = longitude)
+mapData <- mapData %>% rename(propertyLat = latitude)
+
+# make some factors
+mapData$InitialDecision <- as.factor(mapData$InitialDecision)
+
+mapData$LastDecision <- as.factor(mapData$LastDecision)
+
+mapData$BookedYN <- as.factor(mapData$BookedYN)
+
+mapData$Underwriter <- as.factor(mapData$Underwriter)
+
+mapData$Region <- as.factor(mapData$Region)
+
+mapData$PropertyType <-  as.factor(mapData$PropertyType)
+
+# make some factors
+mapData$BranchName <- as.factor(mapData$BranchName)
+
+# bau factor
+mapData$Campaign <- as.factor(mapData$Campaign)
+
+# clean up LoanToValue
+mapData$LoanToValue <- ifelse(mapData$LoanToValue > 1, mapData$LoanToValue/100, mapData$LoanToValue)
+
+# clean up DTI
+mapData$DTI <- ifelse(mapData$DTI > 1, mapData$DTI/100, mapData$DTI)
+
+# create difference of estimate field (final - initial)
+mapData$DeltaEstimate <- abs(mapData$FinalEstimatedAmt - mapData$InitialEstimatedAmt)
+
+
+```
+
+
+
+```{r plotting}
+# make some plots
+# use this theme
+theme_bryan <- function () { 
+  theme(axis.text.x = element_text(size = 8, color = 'blue', angle = 0),
+        legend.position = 'bottom',
+        axis.text.y = element_text(color = 'blue'),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        strip.text.x = element_text(color = 'darkblue', size = 10, face = 'bold'),
+        strip.background = element_rect(fill = 'light blue'))
+}
+
+
+
+mapData$DeltaEstLvl <- cut(mapData$DeltaEstimate, c(0,10000,50000, 100000, 5000000), include.lowest = F,
+                          labels = c('< $10K', 
+                                     '$10-50K', 
+                                     '$50-100K', 
+                                     '$100K+'
+                                     ))
+
+
+
+mapData$MortBalLvl <- cut(mapData$MortBal, c(0,100000,250000, 500000, 1000000, 1000000000), include.lowest = F,
+                          labels = c('< $100K', 
+                                     '$100-250K', 
+                                     '$250-500K', 
+                                     '$500K-$1M',
+                                     '$1M+'
+                          ))
+
+
+mapData$contractAmtLvl <- cut(mapData$contractAmt, c(0,100000,250000, 500000, 1000000, 1000000000), include.lowest = F,
+                          labels = c('< $100K', 
+                                     '$100-250K', 
+                                     '$250-500K', 
+                                     '$500K-$1M',
+                                     '$1M+'
+                                     ))
+
+
+mapData$ScoreLvl <- cut(mapData$Score, c(0,650, 700, 750, 800, 1000), include.lowest = F,
+                           labels = c('< 650', 
+                                      '650-700', 
+                                      '700-750', 
+                                      '750-800',
+                                      '800+'
+                                      ))
+
+
+mapData$DTILvl <- cut(mapData$DTI, c(0,.25, .5, .75, 1), include.lowest = F,
+                        labels = c('< .25', 
+                                   '.25-0.5', 
+                                   '.5-.75', 
+                                   '.75-1'
+                                   ))
+
+
+mapData$DaystoDecisionLvl <- cut(mapData$ApplicationDaystoDecision, c(0, 7, 14, 21, 50), include.lowest = F,
+                                 labels = c('< 1 Wk', 
+                                            '1-2 Wks', 
+                                            '2-3 Wks', 
+                                            '3+ Wks'
+                                            ))
+
+
+
+
+
+
+
+# get month and make it a factor
+#create a month factor for plotting
+mapData$AppDate <- as.Date(mapData$AppDate, format = '%m/%d/%Y')
+
+# get the month
+mapData$Month <- format(mapData$AppDate, format = "%b")
+
+
+
+# make month factors
+mapData$Month <- ordered(mapData$Month, levels = c(
+                                                   "Oct",
+                                                   "Nov",
+                                                   "Dec",
+                                                   "Jan",
+                                                   "Feb",
+                                                   "Mar",
+                                                   "Apr",
+                                                   "May",
+                                                   "Jun",
+                                                   "Jul"
+                                                   ))
+
+
+
+
+# get a subset of data for plotting
+plotData <- mapData %>% select(
+  Analyst,
+  BranchName,
+  Region,
+  OriginationChannelCode,
+  DistributionChannelCode,
+  appid,
+  Score,
+  contractAmt,
+  InitialDecision,
+  LastDecision,
+  BookedYN,
+  Underwriter,
+  APR,
+  ApplicationDaystoDecision,
+  LoanToValue,
+  DTI,
+  DeltaEstimate,
+  Month,
+  MortBal,
+  Campaign
+)
+
+
+plotData$BranchName <- stringr::str_to_title(plotData$BranchName)
+
+# make a palette
+eastPal <-  c('red','royalblue3', 'royalblue')
+
+```
+
+
+
+## Contract Size
+### - CSC and EB.com generate most originating volume
+```{r contractAmt, height = 12}
+##### Crosstabs for contractAmt ------------->
+
+# count apps
+g1 <- ggplot(subset(plotData, Campaign == 'BAU'), aes(x = reorder(BranchName, BranchName, length), fill = BookedYN)) + 
+  coord_flip() + geom_bar(stat = 'count') +  
+  theme_bryan() + theme(axis.text.y = element_text(size = 8, color = 'blue', angle = 0)) + 
+  ggtitle("Contract Counts by Originating Branch (BAU)") + 
+  scale_fill_manual(values = eastPal) +
+  theme(plot.title = element_text(color = 'blue', size = 12, face = 'bold'))
+
+g2 <- ggplot(subset(plotData, Campaign == 'Campaign'), aes(x = reorder(BranchName, BranchName, length), fill = BookedYN)) + 
+  coord_flip() + geom_bar(stat = 'count') +  
+  theme_bryan() + theme(axis.text.y = element_text(size = 8, color = 'blue', angle = 0)) + 
+  ggtitle("Contract Counts by Originating Branch (Campaign)") + 
+  scale_fill_manual(values = eastPal) +
+  theme(plot.title = element_text(color = 'blue', size = 12, face = 'bold'))
+
+
+grid.arrange(g1, g2, ncol=2)
+
+
+
+
+
+```
+
+
+### - July was best month for booked amounts (larger contracts)
+```{R month}
+# box plot by month
+# contract amt month
+b <- ggplot(plotData, aes(x = Month, y = contractAmt, fill = Campaign)) + 
+  geom_boxplot(notch=TRUE) + scale_y_continuous(labels = comma, limits=c(0, 1000000)) + scale_fill_manual(values = eastPal) +
+  stat_summary(fun="mean", geom="point", shape = 23, size = 3, fill = "white") + 
+  theme_bryan() + facet_wrap(~BookedYN) 
+b
+``

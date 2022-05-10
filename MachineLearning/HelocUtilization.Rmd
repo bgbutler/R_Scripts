@@ -1,0 +1,114 @@
+---
+title: "Heloc Utilization"
+author: "Bryan Butler"
+date: "9/21/2020"
+output:
+    html_document:
+    toc: false
+    toc_depth: 1
+    fig_crop: no
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+
+knitr::opts_chunk$set(echo = FALSE, warning= FALSE, error =FALSE, message = FALSE, cache.lazy = FALSE, comment=NA, fig.width=10, fig.height=8)
+
+knitr::read_chunk('C:/Users/bbutler/Documents/HELOC/MarkovHeloc.R')
+
+```
+
+
+# {.tabset .tabset-fade .tabset-pills}
+
+
+<style>
+  .main-container {
+    max-width: 100% !important;
+    margin-left: auto;
+    margin-right: auto;
+  }
+</style>
+
+
+
+```{r, loadlibs, echo=FALSE}
+
+```
+
+
+```{r, loadData, echo=FALSE}
+
+```
+
+
+
+```{r, cleanData}
+
+```
+
+
+
+
+```{r, sliceData}
+
+```
+
+
+```{r, plotData}
+
+```
+
+
+## Original Utilization Plots
+#### - Two types of utilization transactions Flex Equity Line, Flex Fixed Draw.
+#### - Utilization is defined as the Ledger Balance/Contract Amt.
+#### - Time is measured from date of issue to month end for calculations of Month 1, 2, etc in uniform 30 day intervals.
+#### - Flex Equity at zero, flex fixed draw more spread out concentrating around 100% utilization.
+```{r, origUtil, fig.height=6, fig.width=10}
+
+```
+
+
+## Utilization Snapshots
+#### - All campaigns are highly bi-model at 0 and 100%.
+#### - Tend to have a spike around 50%.
+```{r, utilizationPlots, fig.height=6, fig.width=10}
+
+```
+
+
+```{r, prepMarkov}
+
+```
+
+## 2019 Campaign
+#### - Those that draw 80-100% initially stay at the level in the first month.
+#### - Takes about 3 months for movement to start from the 80-100% bin.
+#### - Activity in the 0-20% bin levels off after 2 months.
+```{r, camp2019MC}
+
+```
+
+
+## 2020 Campaign
+#### - Initial draws tend to be all (80-100%) or small (0-20%).
+#### - Starting with Month 3, the 0-20% begin to reduce utilization.
+#### - The 80-100% bin is static for the first 6 months.
+```{r, camp2020MC}
+
+```
+
+## BAU
+#### - Within a year, most in the 0-20% bin, reduce there utilization.
+#### - Within 6 months, 6.5% of those in the initial 80-100% bin have reduced utilization.
+```{r, bauMC}
+
+```
+
+
+
+
+
+
+
