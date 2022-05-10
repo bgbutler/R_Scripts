@@ -1,0 +1,377 @@
+---
+title: "Google Trends Forecast"
+author: "Bryan Butler"
+date: "8/12/2020"
+output:
+    html_document:
+    toc: false
+    toc_depth: 1
+    fig_crop: no
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+library(reticulate)
+knitr::knit_engines$set(python = reticulate::eng_python)
+knitr::opts_chunk$set(echo = FALSE, warning= FALSE, error =TRUE, message = FALSE, cache.lazy = FALSE, comment=NA, fig.width=10, fig.height=8, python.reticulate=FALSE)
+use_condaenv('timeseries')
+```
+
+
+# {.tabset .tabset-fade .tabset-pills}
+
+
+<style>
+  .main-container {
+    max-width: 1200px !important;
+    margin-left: auto;
+    margin-right: auto;
+  }
+</style>
+
+
+
+
+
+```{python importLibaries, echo=FALSE}
+# Base libraries
+import PyQt5
+import pandas as pd
+from pandas import Series, DataFrame
+
+import numpy as np
+
+import os
+import math
+from itertools import cycle
+
+# plotting libraries
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+from matplotlib.pyplot import figure
+
+# stats models tools
+import statsmodels.api as sm
+
+# Dickey-Fuller test for stationarity
+from statsmodels.tsa.stattools import adfuller
+
+# seasonal decomposition
+from statsmodels.tsa.seasonal import seasonal_decompose
+
+# for expanding plots
+from pylab import rcParams
+
+
+# ignore harmless warnings
+import warnings
+warnings.filterwarnings('ignore')
+
+# get the time series module
+import timeseries_module as ts
+import timeseries_module_v1 as ts1
+
+# import more libraries
+
+import statsmodels.api as sm
+from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
+from statsmodels.tsa.ar_model import AR, ARResults
+from statsmodels.tsa.arima_model import ARMA, ARIMA, ARMAResults, ARIMAResults
+from statsmodels.tsa.statespace.sarimax import SARIMAX, SARIMAXResults
+
+from statsmodels.tools.eval_measures import mse, rmse
+
+
+from pylab import rcParams
+
+
+
+
+```
+
+
+
+
+```{python chDir, echo=FALSE}
+
+myPath = os.path.join('C:\\', 'Users', 'bbutler', 'Documents\DigitalAnalytics')
+
+os.chdir(myPath)
+
+data = pd.read_csv('HelocTermsMulti.csv',index_col='Week', parse_dates=True)
+
+data.columns = ['equity_loan', 'home_equity']
+
+
+
+```
+
+
+## Series Plots
+### - Series appear closely correlated with a constant offset
+### - Home Equity is generally higher over the time (weekly intervals)
+```{python nicePlot, echo=FALSE, warning=FALSE, message = FALSE, results=FALSE}
+# make the nice plot
+
+# set the figure size
+fig = plt.figure(figsize = (12,10))
+
+# the series
+ax1 = fig.add_subplot(211)
+ax1.plot(data.index.values, data['equity_loan'], color = 'blue', label = 'equity loan')
+
+# plot the legend for the first plot
+ax1.legend(loc = 'upper right', fontsize = 14)
+
+plt.ylabel('Relative Volume', fontsize=16)
+plt.setp(ax1.get_yticklabels(), fontsize=14) 
+
+# Hide the top x axis
+ax1.axes.get_xaxis().set_visible(False)
+
+#######  NOW PLOT THE OTHER SERIES ON A SINGLE PLOT
+
+# plot 212 is the home equity series
+
+# plot series
+ax2 = fig.add_subplot(212)
+ax2.plot(data.index.values, data['home_equity'], color = 'orange', label = 'home equity')
+
+# plot the legend for the second plot
+ax2.legend(loc = 'upper right', fontsize = 14)
+
+# set the fontsize for the bottom plot
+plt.ylabel('Relative Volume', fontsize=16)
+plt.setp(ax1.get_yticklabels(), fontsize=14) 
+plt.setp(ax1.get_xticklabels(), fontsize=14)
+
+plt.tight_layout()
+plt.show();
+
+
+
+
+```
+
+
+### - Combined Plot
+```{python combinedPlot, echo=FALSE, warning=FALSE, message = FALSE, results=FALSE}
+# make a combined plot
+# set the figure size
+fig = plt.figure(figsize = (12,8))
+
+# the series
+# ax1 = fig.add_subplot(211)
+ax1 = data['equity_loan'].plot(x=data.index.values,y=data['equity_loan'], color = 'blue', label = 'equity loan')
+
+
+plt.ylabel('Relative Volume', fontsize=16)
+plt.setp(ax1.get_yticklabels(), fontsize=14) 
+
+# Hide the top x axis
+ax1.axes.get_xaxis().set_visible(False)
+
+#######  NOW PLOT THE OTHER SERIES ON A same PLOT
+
+# plot series
+ax2 = data['home_equity'].plot(x=data.index.values, y=data['home_equity'], color = 'orange', label = 'home equity')
+ax2.axes.get_xaxis().set_visible(True)
+
+
+
+# plot the legend for the second plot
+ax2.legend(loc = 'upper right', fontsize = 14)
+
+plt.tight_layout()
+plt.show();
+```
+
+
+## Trend
+### - Series are stationary, no inherent trend
+```{python adf}
+ts.adf_test(data['equity_loan'])
+
+ts.adf_test(data['home_equity'])
+
+```
+
+
+## Equity Loan
+### - Seasonal Decompose
+```{python equityLoan}
+N,M = 16,10
+result = seasonal_decompose(data['equity_loan'], model = 'multiplicative', period=7)
+rcParams['figure.figsize'] = N,M
+result.plot()
+plt.show()
+
+```
+
+
+### - Autocorrelations show up to 5 periods past infleunce forecast
+### - Shows combined effect of all past values
+```{python acf}
+# get an acf plot
+
+N, M = 12, 6
+fig, ax = plt.subplots(figsize=(N, M))
+plot_acf(data['equity_loan'], lags=40, ax=ax)
+plt.show()
+
+```
+
+
+### - Partial autocorrelations show up to 4 periods past influence forecast
+### - Reflect each past value in isolation
+### - Lag 38 has a spike of importance
+```{python pacf}
+# get an pacf plot
+
+N, M = 12, 6
+fig, ax = plt.subplots(figsize=(N, M))
+plot_pacf(data['equity_loan'], lags=40, ax=ax)
+plt.show()
+
+```
+
+
+## Equity Loan Model
+```{python model, echo=FALSE, results=FALSE}
+# set the forecast horizon
+horizon = 4
+
+# set the data slice
+fcast = len(data) - horizon
+
+# make the slice
+train = data.iloc[0:fcast]
+test = data.iloc[fcast:]
+
+# pick the series
+series = 'equity_loan'
+
+# create the series
+wdf = pd.DataFrame(train[series])
+exog_data = pd.DataFrame(train['home_equity'])
+
+# reindex to prevent error
+wdf.reindex(exog_data.index)
+
+# make the model
+model = SARIMAX(wdf['equity_loan'], order=(1,0,0), seasonal_order=(0,1,1,5), exog=train['home_equity'], enforce_invertibility=True)
+
+results = model.fit()
+
+
+```
+
+
+
+### - Backtest shows good model fit
+```{python backtest}
+# set up for backtesting
+
+start = len(train)
+end = len(train) + len(test) - 1
+
+
+backtest = results.predict(start=0, end=start-1, typ='levels', exog=exog_data).rename('Backtest Model')
+
+
+# make a plot of model fit
+train['equity_loan'].plot(figsize=(16,8), legend=True)
+backtest.plot(legend=True);
+plt.show();
+```
+
+
+### - Predictions are good for first three periods out
+```{python  forecast}
+# make a plot of model fit
+
+predictions = results.predict(start,end, exog=test['home_equity']).rename('SARIMA Model')
+
+test['equity_loan'].plot(figsize=(16,8), legend=True)
+predictions.plot(legend=True);
+plt.show();
+```
+
+
+## Home Equity
+### - Seasonal decompose shows strong seasonality
+```{python homeEquity}
+N,M = 16,10
+result = seasonal_decompose(data['home_equity'], model = 'additive', period=7)
+rcParams['figure.figsize'] = N,M
+result.plot()
+plt.show()
+
+
+```
+
+
+### - Autocorrelations go back 5 weeks
+```{python acf1}
+# get an acf plot
+
+N, M = 12, 6
+fig, ax = plt.subplots(figsize=(N, M))
+plot_acf(data['home_equity'], lags=40, ax=ax)
+plt.show()
+```
+
+
+### - Partial autocorrelations have much stronger impacts from past weeks
+```{python pacf1}
+# get an pacf plot
+N, M = 12, 6
+fig, ax = plt.subplots(figsize=(N, M))
+plot_pacf(data['home_equity'], lags=40, ax=ax)
+plt.show()
+```
+
+
+## Home Equity Model
+```{python model1, results=FALSE}
+series = 'home_equity'
+
+wdf = pd.DataFrame(train[series])
+
+exog_data = pd.DataFrame(train['equity_loan'])
+
+wdf.reindex(exog_data.index)
+
+model = SARIMAX(wdf['home_equity'], order=(1,0,0), seasonal_order=(0,1,1,13), exog=train['equity_loan'], enforce_invertibility=True)
+
+results = model.fit()
+
+
+```
+
+
+```{python backtest1}
+# set up for backtesting
+backtest = results.predict(start=0, end=start-1, typ='levels', exog=exog_data).rename('Backtest Model')
+
+
+# make a plot of model fit
+train['home_equity'].plot(figsize=(16,8), legend=True)
+backtest.plot(legend=True);
+plt.show();
+
+```
+
+### - Predictions good for first 3 forecasts
+```{python predictions1}
+predictions = results.predict(start,end, exog=test['equity_loan']).rename('SARIMA Model')
+
+# make a plot of model fit
+test['home_equity'].plot(figsize=(16,8), legend=True)
+predictions.plot(legend=True);
+plt.show()
+
+```
+
+

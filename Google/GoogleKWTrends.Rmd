@@ -1,0 +1,236 @@
+---
+title: "Google Trend Keywords"
+author: "Bryan Butler"
+date: "8/6/2020"
+output:
+    html_document:
+    toc: false
+    toc_depth: 1
+    fig_crop: no
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+library(reticulate)
+knitr::knit_engines$set(python = reticulate::eng_python)
+knitr::opts_chunk$set(echo = FALSE, warning= FALSE, error =TRUE, message = FALSE, cache.lazy = FALSE, comment=NA, fig.width=10, fig.height=8, python.reticulate=FALSE)
+
+```
+
+
+# {.tabset .tabset-fade .tabset-pills}
+
+
+<style>
+  .main-container {
+    max-width: 1200px !important;
+    margin-left: auto;
+    margin-right: auto;
+  }
+</style>
+
+
+
+
+
+```{python importLibaries, echo=FALSE}
+# Base libraries
+import PyQt5
+import pandas as pd
+from pandas import Series, DataFrame
+
+import numpy as np
+import pyodbc
+import os
+import math
+from itertools import cycle
+
+# plotting libraries
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+from matplotlib.pyplot import figure
+
+# stats models tools
+import statsmodels.api as sm
+
+# Dickey-Fuller test for stationarity
+from statsmodels.tsa.stattools import adfuller
+
+# seasonal decomposition
+from statsmodels.tsa.seasonal import seasonal_decompose
+
+# for expanding plots
+from pylab import rcParams
+
+
+# ignore harmless warnings
+import warnings
+warnings.filterwarnings('ignore')
+```
+
+
+```{python adfTest, echo=FALSE}
+# get the Dickey-Fuller function
+def adf_test(series,title=''):
+    """
+    Pass in a time series and an optional title, returns an ADF report
+    """
+    print(f'Augmented Dickey-Fuller Test: {title}')
+    result = adfuller(series.dropna(),autolag='AIC') # .dropna() handles differenced data
+    
+    labels = ['ADF test statistic','p-value','# lags used','# observations']
+    out = pd.Series(result[0:4],index=labels)
+    for key,val in result[4].items():
+        out[f'critical value ({key})']=val
+        
+    print(out.to_string())          # .to_string() removes the line "dtype: float64"
+    
+    if result[1] <= 0.05:
+        print("Strong evidence against the null hypothesis")
+        print("Reject the null hypothesis")
+        print("Data has no unit root and is stationary")
+    else:
+        print("Weak evidence against the null hypothesis")
+        print("Fail to reject the null hypothesis")
+        print("Data has a unit root and is non-stationary")
+```
+
+
+## Initial Plots
+```{r makePlots}
+# google trends
+
+library(tidyverse)
+library(DT)
+library(reshape2)
+library(RColorBrewer)
+library(ggplot2)
+
+library(plotly)
+
+library(scales)
+library(htmltools)
+library(plotly)
+library(dplyr)
+
+# set wd
+# os.chdir('C:\\Users\\bbutler\\Documents\\DigitalAnalytics')
+setwd('C:/Users/bbutler/Documents/DigitalAnalytics/')
+
+# get the file
+trends <- readr::read_csv('heloc_trends.csv')
+
+# rename columns
+colnames(trends) <- c('date', 'home_equity_credit_line', 'heloc', 'home_equity_rate',
+                     'heloc_loan', 'equity_loan', 'home_equity', 'DCU_home_equity_loan',
+                     'Citizens_home_equity_loan', 'Citizens_bank_HELOC')
+
+# melt the data for plotting
+trendsMelt <- melt(trends, id = c('date'),
+                   variable.name = "Keyword",
+                   value.name = "RelImp")
+
+# use this theme
+theme_bryan <- function () { 
+  theme(axis.text.x = element_text(size = 8, color = 'blue', angle = 0),
+        legend.position = 'bottom',
+        axis.text.y = element_text(color = 'blue'),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        strip.text.x = element_text(color = 'darkblue', size = 10, face = 'bold'),
+        strip.background = element_rect(fill = 'light blue'))
+}
+```
+
+
+### Similar Groupings of Keywords
+```{r makeBox}
+# make a plot
+# this is the density of product ownership
+b <- ggplot(trendsMelt, aes(x = Keyword, y = RelImp, fill = Keyword)) + 
+  geom_boxplot(notch=TRUE) + 
+  stat_summary(fun="mean", geom="point", shape = 23, size = 3, fill = "white") + 
+  theme_bryan() + 
+  theme(axis.text.x = element_text(size = 12, color = 'blue', angle = 45, hjust = 1))
+
+b
+```
+
+
+### Interactive Box Plot
+```{r}
+# interactive one
+g <- ggplot(trendsMelt, aes(x = Keyword, y = RelImp, fill = Keyword)) + 
+  geom_boxplot() + 
+  stat_summary(fun="mean", geom="point", shape = 23, size = 3, fill = "white") + 
+  theme_bryan() + 
+  theme(axis.text.x = element_text(size = 12, color = 'blue', angle = 45))
+
+ggplotly(g, tooltip = c("x", "y"))
+```
+
+
+## Series Plots
+###  - Non-competitor keywords have similar distributions
+```{r fig.width=12, fig.height=10}
+# get line plot
+g <- ggplot(trendsMelt, aes(x = date, y = RelImp, color = Keyword)) + 
+  geom_line() + facet_wrap(~Keyword, ncol = 2) +
+  theme_bryan() + 
+  scale_x_date(date_breaks = "month" , date_labels = "%m-%y") + 
+  theme(legend.position = ' ') + 
+  theme(axis.text.x = element_text(angle = 45)) + 
+  theme(panel.spacing.x = unit(4, "lines"))
+
+# get the plotting parameters
+params <- ggplot_build(g)$layout$panel_params[[1]][c("x.range","y.range")]
+params <- unlist(params)
+y_pos <- as.numeric(params[3])
+y_pos <- y_pos
+
+ggplotly(g, tooltip = c("x", "y")) %>% layout(showlegend = FALSE)
+```
+
+
+## Check for Trend
+### - All series are stationary, no inherent trend; they bouce around a mean
+```{python loadPandasData, echo=TRUE}
+import pandas as pd
+
+trends = pd.read_csv('heloc_trends.csv', index_col='date', parse_dates = True)
+
+trends.columns = ['home_equity_credit_line', 'heloc', 'home_equity_rate',
+                     'heloc_loan', 'equity_loan', 'home_equity', 'DCU_home_equity_loan',
+                     'Citizens_home_equity_loan', 'Citizens_bank_HELOC']
+                     
+
+all_series = trends.columns
+
+for col in all_series:
+  print(col)
+  adf_test(trends[col])
+  print('\n')
+
+  
+```
+
+
+
+## Correlation
+```{python corrPlot}
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+sns.set(style="ticks", color_codes=True)
+g = sns.pairplot(trends)
+plt.show()
+
+```
+
+
+
+
+
+
+

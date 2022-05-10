@@ -1,0 +1,791 @@
+---
+title: "Checking KW Analysis"
+author: "Bryan Butler"
+date: "8/27/2020"
+output:
+    html_document:
+    toc: false
+    toc_depth: 1
+    fig_crop: no
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+library(reticulate)
+knitr::knit_engines$set(python = reticulate::eng_python)
+knitr::opts_chunk$set(echo = FALSE, warning= FALSE, error =TRUE, message = FALSE, cache.lazy = FALSE, comment=NA, fig.width=10, fig.height=8, python.reticulate=FALSE)
+use_condaenv('timeseries')
+```
+
+
+# {.tabset .tabset-fade .tabset-pills}
+
+
+<style>
+  .main-container {
+    max-width: 1200px !important;
+    margin-left: auto;
+    margin-right: auto;
+  }
+</style>
+
+
+```{python importLibaries, echo=FALSE}
+# Base libraries
+import PyQt5
+import pandas as pd
+from pandas import Series, DataFrame
+
+import numpy as np
+
+import os
+import math
+from itertools import cycle
+
+# plotting libraries
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+import matplotlib as mpl
+from matplotlib.pyplot import figure
+
+# stats models tools
+import statsmodels.api as sm
+
+# Dickey-Fuller test for stationarity
+from statsmodels.tsa.stattools import adfuller
+
+# seasonal decomposition
+from statsmodels.tsa.seasonal import seasonal_decompose
+
+# for expanding plots
+from pylab import rcParams
+
+
+# ignore harmless warnings
+import warnings
+warnings.filterwarnings('ignore')
+
+# get the time series module
+import timeseries_module as ts
+import timeseries_module_v1 as ts1
+
+# import more libraries
+
+import statsmodels.api as sm
+from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
+from statsmodels.tsa.ar_model import AR, ARResults
+from statsmodels.tsa.arima_model import ARMA, ARIMA, ARMAResults, ARIMAResults
+from statsmodels.tsa.statespace.sarimax import SARIMAX, SARIMAXResults
+
+from statsmodels.tools.eval_measures import mse, rmse
+
+
+from pylab import rcParams
+
+import datetime as dt
+
+
+pd.set_option('display.max_columns', 999)
+pd.set_option('display.max_rows', 100)
+pd.options.display.float_format = '{:.2f}'.format
+```
+
+
+
+```{python chDir, echo=F, warning=FALSE, message = FALSE, results=FALSE}
+
+myPath = os.path.join('C:\\', 'Users', 'bbutler', 'Documents\DigitalAnalytics')
+
+os.chdir(myPath)
+
+kwData = pd.read_csv('checkingKeywords.csv',skiprows = 2, index_col='Week', parse_dates=True)
+
+
+
+# free checking: (Massachusetts)	open online checking account: (Massachusetts)	checking: (Massachusetts)
+
+kwData.columns = ['free_checking', 'open_online_checking_account', 'checking']
+
+
+# conversions for 2020
+conversions = pd.read_csv('checkingConversions2020.csv',index_col='Date', parse_dates=True)
+conversions.columns = ['application_starts', 'CPAS']
+
+# conversions for 2019
+conversions2019 = pd.read_csv('checkingConversions2019.csv',index_col='Date', parse_dates=True)
+
+
+
+
+
+# conversions.head()
+
+# conversions.info()
+
+# convert CPAS to numeric
+conversions['CPAS'] = conversions['CPAS'].astype(float)
+
+conversions['total_cost'] = conversions['application_starts'] * conversions['CPAS']
+
+# conversions.head()
+
+
+dailyKeywords2020 =  pd.read_csv('checkingKeywordDaily2020.csv',skiprows = 2, index_col='Day', parse_dates=True)
+
+
+
+dailyKeywords2019 =  pd.read_csv('checkingKeywordDaily2019.csv',skiprows = 2, index_col='Day', parse_dates=True)
+
+
+```
+
+
+
+```{python daily, echo=F, warning=FALSE, message = FALSE, results=FALSE}
+# make a new df to not impact the initial one
+dailyConversions2020 = conversions.copy()
+
+# clean up columns names
+dailyKeywords2020.columns = ['free_checking', 'open_online_checking_account', 'checking']
+dailyKeywords2019.columns = ['free_checking', 'open_online_checking_account', 'checking']
+
+# reset the indices for the join
+dailyKeywords2020.reset_index(inplace=True)
+dailyKeywords2019.reset_index(inplace=True)
+
+
+dailyConversions2020.reset_index(inplace=True)
+conversions2019.reset_index(inplace=True)
+
+# clean column name to make same
+dailyConversions2020.rename(columns = {'Date':'Day'}, inplace=True)
+conversions2019.rename(columns = {'Date':'Day'}, inplace=True)
+
+
+daily2020 = dailyKeywords2020.merge(dailyConversions2020, on='Day', how='left')
+
+daily2019 = dailyKeywords2019.merge(conversions2019, on='Day', how='left')
+
+# set the indices
+
+daily2020.set_index(daily2020['Day'], inplace = True)
+daily2019.set_index(daily2019['Day'], inplace = True)
+
+```
+
+
+
+
+
+
+
+
+
+```{python aggregate, echo = F}
+# resample conversions to weekly
+
+# weekly sample drops call center state
+weekly_conv = conversions.resample('W').aggregate(
+                                 {'application_starts': np.sum,
+                                  'total_cost': np.sum})
+
+
+weekly_conv['CPAS'] = weekly_conv['total_cost']/weekly_conv['application_starts']
+
+
+
+
+
+# reset indices
+kwData.reset_index(inplace=True)
+
+weekly_conv.reset_index(inplace=True)
+
+weekly_conv.rename(columns = {'Date':'Week'}, inplace=True)
+
+
+# merge df
+
+combined = kwData.merge(weekly_conv, on='Week', how='left')
+# print(combined)
+
+
+
+# reset the index to week
+combined = combined.set_index(combined['Week'])
+
+# combined.info()
+
+
+```
+
+
+
+
+
+## Keywords
+### - Keywords are relatively flat over the period of time.
+### - App starts rampped up after a two week lag
+### - App starts and costs most correlated (as expected)
+### - App starts dipped when 'open online checking' spiked
+```{python nicePlot, echo=F, warning=FALSE, message = FALSE, results=FALSE}
+# make the nice plot
+
+# set the figure size
+fig = plt.figure(figsize = (12,10))
+
+# the series
+ax1 = fig.add_subplot(311)
+ax1.plot(combined.index.values, combined['free_checking'], color = 'blue', label = 'free checking')
+ax1.plot(combined.index.values, combined['open_online_checking_account'], color = 'indigo', label = 'open online checking account')
+
+
+# plot the legend for the first plot
+ax1.legend(loc = 'upper right', fontsize = 14)
+
+plt.ylabel('Relative Volume', fontsize=16)
+plt.setp(ax1.get_yticklabels(), fontsize=14) 
+
+# Hide the top x axis
+ax1.axes.get_xaxis().set_visible(True)
+dstart = dt.datetime(2020, 6, 12)
+dend = dt.datetime(2020, 8, 16)
+
+ax1.set_xlim([dstart,dend])
+
+
+# plot 212 is the app starts
+
+# plot series
+ax2 = fig.add_subplot(312)
+ax2.plot(combined.index.values, combined['application_starts'], color = 'orange', label = 'App Starts')
+
+# plot the legend for the second plot
+ax2.legend(loc = 'upper right', fontsize = 14)
+
+# set the fontsize for the bottom plot
+plt.ylabel('App Starts', fontsize=16)
+# plt.setp(ax1.get_yticklabels(), fontsize=14) 
+# plt.setp(ax1.get_xticklabels(), fontsize=14)
+ax2.set_xlim([dstart,dend])
+
+
+
+
+
+# plot 313 is the app cost
+
+# plot series
+ax3 = fig.add_subplot(313)
+ax3.plot(combined.index.values, combined['total_cost'], color = 'green', label = 'Total Cost')
+
+ax3.yaxis.set_major_formatter(mpl.ticker.StrMethodFormatter('${x:,.0f}'))
+
+# plot the legend for the second plot
+ax3.legend(loc = 'upper right', fontsize = 14)
+
+# set the fontsize for the bottom plot
+plt.ylabel('Weekly Cost', fontsize=16)
+# plt.setp(ax1.get_yticklabels(), fontsize=14) 
+# plt.setp(ax1.get_xticklabels(), fontsize=14)
+ax3.set_xlim([dstart,dend])
+
+
+plt.tight_layout()
+plt.show();
+
+
+```
+
+
+
+
+
+## Checking
+### - Larger relative importance than first two key words/phrases
+### - Checking slightly tailing off over the period while app starts mostly stable
+```{python nicePlot3, echo=F, warning=FALSE, message = FALSE, results=FALSE}
+# make the nice plot
+
+# set the figure size
+fig = plt.figure(figsize = (12,10))
+
+# the series
+ax1 = fig.add_subplot(211)
+ax1.plot(combined.index.values, combined['checking'], color = 'blue', label = 'checking')
+
+# plot the legend for the first plot
+ax1.legend(loc = 'upper right', fontsize = 14)
+
+plt.ylabel('Relative Volume', fontsize=16)
+plt.setp(ax1.get_yticklabels(), fontsize=14) 
+
+# Hide the top x axis
+ax1.axes.get_xaxis().set_visible(True)
+dstart = dt.datetime(2020, 6, 12)
+dend = dt.datetime(2020, 8, 16)
+
+ax1.set_xlim([dstart,dend])
+
+
+# plot 212 is the app starts
+
+# plot series
+ax2 = fig.add_subplot(212)
+ax2.plot(combined.index.values, combined['application_starts'], color = 'orange', label = 'App Starts')
+
+# plot the legend for the second plot
+ax2.legend(loc = 'upper right', fontsize = 14)
+
+# set the fontsize for the bottom plot
+plt.ylabel('App Starts', fontsize=16)
+# plt.setp(ax1.get_yticklabels(), fontsize=14) 
+# plt.setp(ax1.get_xticklabels(), fontsize=14)
+ax2.set_xlim([dstart,dend])
+
+
+plt.tight_layout()
+plt.show();
+
+```
+
+
+
+
+
+
+## Free Checking vs App Starts
+### - Slight negative correlation between 'free checking' and app starts
+```{python freeChecking}
+sns.set(style="darkgrid", color_codes=True)
+g = sns.jointplot('free_checking', 'application_starts', data=combined,
+                  kind="reg", truncate=False,
+                  ylim=(0, 100),
+                  color="m", height=7)
+
+plt.show()
+```
+
+
+
+## Open Online Checking vs App Starts
+### - Weak positive correlation betwen 'open online checking account' and app starts
+```{python onlineChecking}
+sns.set(style="darkgrid", color_codes=True)
+g = sns.jointplot('open_online_checking_account', 'application_starts', data=combined,
+                  kind="reg", truncate=False,
+                  ylim=(0, 100),
+                  color="m", height=7)
+
+plt.show()
+```
+
+
+## Checking vs App Starts
+### - Moderate negative correlation between 'checking' and app starts
+```{python checking}
+sns.set(style="darkgrid", color_codes=True)
+g = sns.jointplot('checking', 'application_starts', data=combined,
+                  kind="reg", truncate=False,
+                  ylim=(0, 100),
+                  color="m", height=7)
+
+plt.show()
+```
+
+
+## Cost vs App Starts
+### - Strong correlation between weekly cost and app starts
+```{python cost}
+sns.set(style="darkgrid", color_codes=True)
+g = sns.jointplot('total_cost', 'application_starts', data=combined,
+                  kind="reg", truncate=False,
+                  ylim=(0, 100),
+                  xlim=(0,10000),
+                  color="m", height=7)
+
+plt.show()
+```
+
+
+
+
+
+
+## 2019 Daily KW
+### - Social generally performed better than paid search in 2019
+```{python daily2019, echo=F, warning=FALSE, message = FALSE, results=FALSE}
+# make the nice plot
+
+# set the figure size
+fig = plt.figure(figsize = (12,10))
+
+# the series
+ax1 = fig.add_subplot(411)
+ax1.plot(daily2019.index.values, daily2019['free_checking'], color = 'blue', label = 'free checking')
+ax1.plot(daily2019.index.values, daily2019['open_online_checking_account'], color = 'indigo', label = 'open online checking account')
+
+
+# plot the legend for the first plot
+ax1.legend(loc = 'upper right', fontsize = 14)
+
+plt.ylabel('Relative Volume', fontsize=16)
+plt.setp(ax1.get_yticklabels(), fontsize=14) 
+
+# Hide the top x axis
+ax1.axes.get_xaxis().set_visible(True)
+dstart = dt.datetime(2019, 3, 18)
+dend = dt.datetime(2019, 10, 20)
+
+ax1.set_xlim([dstart,dend])
+
+
+# plot 212 is the app starts
+
+# plot series
+ax2 = fig.add_subplot(412)
+ax2.plot(daily2019.index.values, daily2019['SearchStarts'], color = 'salmon', label = 'Search Starts')
+ax2.plot(daily2019.index.values, daily2019['SocialStarts'], color = 'orange', label = 'Social Starts')
+
+# plot the legend for the second plot
+ax2.legend(loc = 'upper right', fontsize = 14)
+
+# set the fontsize for the bottom plot
+plt.ylabel('App Starts', fontsize=16)
+# plt.setp(ax1.get_yticklabels(), fontsize=14) 
+# plt.setp(ax1.get_xticklabels(), fontsize=14)
+ax2.set_xlim([dstart,dend])
+
+
+# plot 313 is the app cost
+
+# plot series
+ax3 = fig.add_subplot(413)
+ax3.plot(daily2019.index.values, daily2019['SearchCPAS'], color = 'green', label = 'Search CPAS')
+ax3.plot(daily2019.index.values, daily2019['SocialCPAS'], color = 'c', label = 'Social CPAS')
+ax3.yaxis.set_major_formatter(mpl.ticker.StrMethodFormatter('${x:,.2f}'))
+
+# plot the legend for the second plot
+ax3.legend(loc = 'upper right', fontsize = 14)
+
+# set the fontsize for the bottom plot
+plt.ylabel('CPAS', fontsize=16)
+
+ax3.set_xlim([dstart,dend])
+
+# zoom in 
+# plot 313 is the app cost
+
+# plot series
+ax3 = fig.add_subplot(414)
+ax3.plot(daily2019.index.values, daily2019['SearchCPAS'], color = 'green', label = 'Search CPAS')
+ax3.plot(daily2019.index.values, daily2019['SocialCPAS'], color = 'c', label = 'Social CPAS')
+ax3.yaxis.set_major_formatter(mpl.ticker.StrMethodFormatter('${x:,.2f}'))
+
+# plot the legend for the second plot
+ax3.legend(loc = 'upper right', fontsize = 14)
+
+# set the fontsize for the bottom plot
+plt.ylabel('CPAS', fontsize=16)
+
+ax3.set_xlim([dstart,dend])
+ax3.set_ylim([0,400])
+
+
+
+
+plt.tight_layout()
+plt.show();
+
+
+```
+
+
+
+
+
+## 2020 Daily KW
+### - On a daily basis, app start more volatile
+### - Not directly linked to search term volume
+```{python daily2020, echo=F, warning=FALSE, message = FALSE, results=FALSE}
+
+
+
+# make the nice plot
+
+# set the figure size
+fig = plt.figure(figsize = (12,10))
+
+# the series
+ax1 = fig.add_subplot(311)
+ax1.plot(daily2020.index.values, daily2020['free_checking'], color = 'blue', label = 'free checking')
+ax1.plot(daily2020.index.values, daily2020['open_online_checking_account'], color = 'indigo', label = 'open online checking account')
+
+
+# plot the legend for the first plot
+ax1.legend(loc = 'upper right', fontsize = 14)
+
+plt.ylabel('Relative Volume', fontsize=16)
+plt.setp(ax1.get_yticklabels(), fontsize=14) 
+
+# Hide the top x axis
+ax1.axes.get_xaxis().set_visible(True)
+dstart = dt.datetime(2020, 6, 12)
+dend = dt.datetime(2020, 8, 11)
+
+ax1.set_xlim([dstart,dend])
+
+
+# plot 312 is the app starts
+
+# plot series
+ax2 = fig.add_subplot(312)
+ax2.plot(daily2020.index.values, daily2020['application_starts'], color = 'orange', label = 'App Starts')
+
+
+# plot the legend for the second plot
+ax2.legend(loc = 'upper right', fontsize = 14)
+
+# set the fontsize for the bottom plot
+plt.ylabel('App Starts', fontsize=16)
+# plt.setp(ax1.get_yticklabels(), fontsize=14) 
+# plt.setp(ax1.get_xticklabels(), fontsize=14)
+ax2.set_xlim([dstart,dend])
+
+
+
+
+
+# plot 313 is the app cost
+
+# plot series
+ax3 = fig.add_subplot(313)
+ax3.plot(daily2020.index.values, daily2020['CPAS'], color = 'green', label = 'CPAS')
+
+
+ax3.yaxis.set_major_formatter(mpl.ticker.StrMethodFormatter('${x:,.0f}'))
+
+# plot the legend for the second plot
+ax3.legend(loc = 'upper right', fontsize = 14)
+
+# set the fontsize for the bottom plot
+plt.ylabel('Cost ', fontsize=16)
+# plt.setp(ax1.get_yticklabels(), fontsize=14) 
+# plt.setp(ax1.get_xticklabels(), fontsize=14)
+ax3.set_xlim([dstart,dend])
+
+
+plt.tight_layout()
+plt.show();
+
+
+```
+
+
+## Checking Daily
+### - Much more relative importance than first two key words/phrases
+### - Checking slightly tailing off over the period
+### - Peaks in search volume more correlated to social
+```{python dailychecking, echo=F, warning=FALSE, message = FALSE, results=FALSE}
+# make the nice plot
+
+# set the figure size
+fig = plt.figure(figsize = (12,10))
+
+# the series
+ax1 = fig.add_subplot(211)
+ax1.plot(daily2019.index.values, daily2019['checking'], color = 'blue', label = '2019 checking')
+ax1.plot(daily2020.index.values, daily2020['checking'], color = 'indigo', label = '2020 checking')
+
+# plot the legend for the first plot
+ax1.legend(loc = 'upper right', fontsize = 14)
+
+plt.ylabel('Relative Volume', fontsize=16)
+plt.setp(ax1.get_yticklabels(), fontsize=14) 
+
+# Hide the top x axis
+ax1.axes.get_xaxis().set_visible(True)
+dstart = dt.datetime(2019, 3, 18)
+dend = dt.datetime(2020, 8, 16)
+
+ax1.set_xlim([dstart,dend])
+
+
+# plot 212 is the app starts
+
+# plot series
+ax2 = fig.add_subplot(212)
+ax2.plot(daily2020.index.values, daily2020['application_starts'], color = 'orange', label = 'App Starts')
+ax2.plot(daily2019.index.values, daily2019['SearchStarts'], color = 'gold', label = 'Search Starts')
+ax2.plot(daily2019.index.values, daily2019['SocialStarts'], color = 'salmon', label = 'Social Starts')
+
+# plot the legend for the second plot
+ax2.legend(loc = 'upper right', fontsize = 14)
+
+# set the fontsize for the bottom plot
+plt.ylabel('App Starts', fontsize=16)
+
+ax2.set_xlim([dstart,dend])
+
+
+plt.tight_layout()
+plt.show();
+
+```
+
+
+
+
+
+## Daily Pairs 2019
+### - Low to negative correlation with search terms
+### - Checking and social starts tend to move together
+```{python pair1_2019, warning=FALSE, message = FALSE, results=FALSE }
+sns.set(style="darkgrid", color_codes=True)
+g = sns.jointplot('free_checking', 'SearchStarts', data=daily2019,
+                  kind="reg", truncate=False,
+                  ylim=(0,30),
+                  xlim=(0,40),
+                  color="m", height=7)
+
+plt.show()
+```
+
+
+```{python pair2_2019}
+sns.set(style="darkgrid", color_codes=True)
+g = sns.jointplot('free_checking', 'SocialStarts', data=daily2019,
+                  kind="reg", truncate=False,
+                  ylim=(0,100),
+                  color="m", height=7)
+
+plt.show()
+```
+
+
+```{python pair3_2019}
+sns.set(style="darkgrid", color_codes=True)
+g = sns.jointplot('open_online_checking_account', 'SearchStarts', data=daily2019,
+                  kind="reg", truncate=False,
+                  ylim=(0, 30),
+                  color="m", height=7)
+
+plt.show()
+```
+
+
+```{python pair4_2019}
+sns.set(style="darkgrid", color_codes=True)
+g = sns.jointplot('open_online_checking_account', 'SocialStarts', data=daily2019,
+                  kind="reg", truncate=False,
+                  ylim=(0, 100),
+                  color="m", height=7)
+
+plt.show()
+```
+
+
+
+```{python pair5_2019}
+sns.set(style="darkgrid", color_codes=True)
+g = sns.jointplot('checking', 'SearchStarts', data=daily2019,
+                  kind="reg", truncate=False,
+                  ylim=(0, 100),
+                  color="m", height=7)
+
+plt.show()
+```
+
+
+```{python pair6_2019}
+sns.set(style="darkgrid", color_codes=True)
+g = sns.jointplot('checking', 'SocialStarts', data=daily2019,
+                  kind="reg", truncate=False,
+                  ylim=(0, 100),
+                  color="m", height=7)
+
+plt.show()
+```
+
+
+
+
+
+
+## Daily Pairs 2020
+### - Low positive correlation with checking
+```{python pair1_2020}
+sns.set(style="darkgrid", color_codes=True)
+g = sns.jointplot('free_checking', 'application_starts', data=daily2020,
+                  kind="reg", truncate=False,
+                  ylim=(0, 20),
+                  xlim=(0,25),
+                  color="m", height=7)
+
+plt.show()
+```
+
+```{python pair2_2020}
+sns.set(style="darkgrid", color_codes=True)
+g = sns.jointplot('open_online_checking_account', 'application_starts', data=daily2020,
+                  kind="reg", truncate=False,
+                  ylim=(0, 20),
+                  xlim=(0, 12),
+                  color="m", height=7)
+
+plt.show()
+```
+
+
+
+```{python pair3_2020}
+sns.set(style="darkgrid", color_codes=True)
+g = sns.jointplot('checking', 'application_starts', data=daily2020,
+                  kind="reg", truncate=False,
+                  ylim=(0, 20),
+                  xlim=(0,100),
+                  color="m", height=7)
+
+plt.show()
+```
+
+
+
+## Keyword Seasonality
+### - Free Checking dips down in the fall of the year
+### - More volume 1st and 2nd Quarter
+```{python seasFC}
+N,M = 16,10
+result = seasonal_decompose(combined['free_checking'], model = 'additive', freq=7)
+rcParams['figure.figsize'] = N,M
+result.plot()
+plt.show()
+```
+
+
+### - Open online checking account is driven by 2.5 Month seasonality
+```{python seasOnline}
+N,M = 16,10
+result = seasonal_decompose(combined['open_online_checking_account'], model = 'additive', freq=7)
+rcParams['figure.figsize'] = N,M
+result.plot()
+plt.show()
+```
+
+
+
+### - Checking has strong 2 month seasonal peak with smaller peaks between
+### - Longer slow moving swings
+```{python seasCk}
+N,M = 16,10
+result = seasonal_decompose(combined['checking'], model = 'additive', freq=7)
+rcParams['figure.figsize'] = N,M
+result.plot()
+plt.show()
+```
+
+
+
+
+

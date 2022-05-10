@@ -1,0 +1,381 @@
+---
+title: "Digital Engagement"
+author: "Bryan Butler"
+date: "9/2/2020"
+output:
+    html_document:
+    toc: false
+    toc_depth: 1
+    fig_crop: no
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+library(reticulate)
+knitr::knit_engines$set(python = reticulate::eng_python)
+knitr::opts_chunk$set(echo = FALSE, warning= FALSE, error =TRUE, message = FALSE, cache.lazy = FALSE, comment=NA, fig.width=10, fig.height=12, python.reticulate=FALSE)
+use_condaenv('timeseries')
+```
+
+
+# {.tabset .tabset-fade .tabset-pills}
+
+
+<style>
+  .main-container {
+    max-width: 1200px !important;
+    margin-left: auto;
+    margin-right: auto;
+  }
+</style>
+
+
+```{python importLibaries, echo=F}
+# Base libraries
+import PyQt5
+import pandas as pd
+import numpy as np
+
+import os
+import math
+from itertools import cycle
+
+# plotting libraries
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+
+import datetime as dt
+from datetime import timedelta
+
+# for expanding plots
+from matplotlib import rcParams
+
+
+# ignore harmless warnings
+import warnings
+warnings.filterwarnings('ignore')
+
+pd.set_option('display.max_columns', 999)
+pd.set_option('display.max_rows', 100)
+pd.options.display.float_format = '{:.2f}'.format
+```
+
+
+```{python getData}
+myPath = os.path.join('C:\\', 'Users', 'bbutler', 'Documents\DigitalAnalytics')
+
+os.chdir(myPath)
+
+active = pd.read_csv('DigitalActive.csv')
+inactive = pd.read_csv('DigitalInactive.csv')
+
+
+```
+
+
+```{python  cleanData}
+# create extra column
+active['InitialStatus'] = 'Active'
+inactive['InitialStatus'] = 'Inactive'
+
+# stack the two files
+allData = pd.concat([active,inactive],ignore_index=True)
+
+# create dates
+allData['SetupDate'] = pd.to_datetime(allData['SetupDate'], format='%m/%d/%Y')
+
+# make date
+allData['LastLoginDateClean'] = pd.to_datetime(allData['LastLoginDate']).dt.date
+
+# get the login time
+allData['LoginTime'] = allData['LastLoginDate'].str.split(expand=True)[1]
+
+# clean up the time to get the hour
+allData['LoginHour'] = allData['LoginTime'].str[0:2]
+allData['LoginHour'] = allData['LoginHour'].str.replace(':','')
+# convert login Hour to int
+allData['LoginHour'] = allData['LoginHour'].astype(int)
+```
+
+
+```{python  categories, }
+# set categories
+allData['menu_prf'] = allData['menu_prf'].astype('category')
+allData['InitialStatus'] = allData['InitialStatus'].astype('category')
+```
+
+
+
+```{python referenceDate}
+# create a reference date
+end = pd.datetime(2020,7,31).date()
+
+allData['RefDate'] = end
+
+```
+
+
+
+```{python lastlogin}
+# calculate the days since last login
+
+allData['DaysSinceLogin'] = allData['RefDate'] - allData['LastLoginDateClean']
+
+# convert to clean days using hours
+allData['DaysSinceLogin'] = (allData['DaysSinceLogin'].astype('timedelta64[D]'))
+
+# make it a whole number
+allData['DaysSinceLogin'] = allData['DaysSinceLogin'].astype(int)
+
+```
+
+
+
+```{python daysacctopen}
+# create make reference date a date
+allData['RefDate'] = pd.to_datetime(allData['RefDate'], format='%Y-%m-%d')
+
+allData['DaysAcctOpen'] = allData['RefDate'] - allData['SetupDate']
+
+# convert to clean days using hours
+allData['DaysAcctOpen'] = (allData['DaysAcctOpen'].astype('timedelta64[D]'))
+
+# make it a whole number
+allData['DaysAcctOpen'] = allData['DaysAcctOpen'].astype(int)
+
+# average days between login
+allData['DaysBetLogins'] = allData['DaysAcctOpen']/allData['TotLogins']
+```
+
+
+## Summary of findings
+### - Data was selected for customers who logged in within the last 30 days as active and in excess of 30 days inactive
+### - Among the set of all customers, the median login frequency is once per month
+### - 30 Day window may be too small, resample at either 45 or 60 days; 120 days is the 75th percentile of days since login
+### - For active customers, once every two weeks appears to be the 'norm'
+### - Active SMB page users skew more to once per 3 weeks
+### - Data represents fairly homogenous data with regards to lifetime of accounts ~ 900 days (2.5 years)
+### - The majority of logins happen during regular business hours
+### - For longer days since login, need to investigate if the accounts are still open
+
+
+
+
+
+## Describe Data
+### - Logins have a highly skewed distribution, median at 67 logins over the lifetime
+```{python descLogins}
+allData['TotLogins'].describe()
+
+```
+
+
+### - Total Logins Histogram
+```{python histLocings}
+allData['TotLogins'].hist(bins=75, range = [0,500], align = 'mid', figsize=(15,5))
+
+```
+
+
+### - Days Since Login
+### - Median customer logs in 1/month; not that frequent
+```{python descDays}
+allData['DaysSinceLogin'].describe()
+
+```
+
+### Days Since Login Histogram
+```{python histDays}
+allData['DaysSinceLogin'].hist(bins=75, range = [0,300], align = 'mid', figsize=(15,5))
+```
+
+
+
+## Compare Logins
+### - Accounts originally labelled inactive  have less logins for EASTRANG and EASTSMB
+### - Main group EASTRET are very similar in logins for active and inactive
+```{python cmplog, echo=F, warning=FALSE, message = FALSE, results=FALSE}
+fig = plt.figure(figsize = (12,10))
+# do a nice violin plot
+
+sns.set(style="whitegrid", palette="bright", color_codes=True, rc = {'figure.figsize':(12,10), "ytick.left" : True})
+
+
+# Draw a nested violinplot and split the violins for easier comparison
+p = sns.violinplot(x="menu_prf", y="TotLogins", hue="InitialStatus",
+               split=True, inner="quart",
+               palette={"Active": "b", "Inactive": "y"},
+               data=allData)
+p.set(ylim=(0, 1000))
+sns.despine(left=True)
+plt.show()
+
+```
+
+
+### - Boxplot shows outer groups are much smaller groups
+### - Median logins for active and inactive not significantly different (notches overlap)
+```{python, echo=F, warning=FALSE, message = FALSE, results=FALSE}
+# do a nice box plot
+sns.set(style="whitegrid", palette="bright", color_codes=True, rc = {'figure.figsize':(12,12)})
+
+p = sns.catplot(data = allData,
+                x = 'menu_prf', y = 'TotLogins',
+                hue = 'InitialStatus', kind = 'box',
+                notch = 1,
+                height = 9, aspect = 1)
+p.set(ylim=(0, 1000))
+plt.show()
+```
+
+
+### - Straight comparison shows inactive has less logins but very close
+```{python, echo=F, warning=FALSE, message = FALSE, results=FALSE}
+fig = plt.figure(figsize = (12,10))
+
+# do a nice box plot
+sns.set(style="whitegrid", palette="bright", color_codes=True, rc = {'figure.figsize':(12,10)})
+
+p = sns.boxplot(data = allData,
+                x = 'InitialStatus', y = 'TotLogins',
+                hue = 'InitialStatus',
+                notch = 1)
+p.set(ylim=(0, 1000))
+plt.show()
+
+```
+
+
+## Days Since Last Login
+### - Active accounts have a wide range in days since last login
+```{python, echo=F, warning=FALSE, message = FALSE, results=FALSE}
+# do a nice violin plot
+
+sns.set(style="whitegrid", palette="bright", color_codes=True, rc = {'figure.figsize':(12,10)})
+
+
+# Draw a nested violinplot and split the violins for easier comparison
+p = sns.violinplot(x="menu_prf", y="DaysSinceLogin", hue="InitialStatus",
+               split=True, inner="quart",
+               palette={"Active": "b", "Inactive": "y"},
+               data=allData)
+p.set(ylim=(0, 200))
+sns.despine(left=True)
+plt.show()
+```
+
+
+### - Distribution of average days between logins is very wide (Days Acct Open/Total Logins)
+```{python, echo=F, warning=FALSE, message = FALSE, results=FALSE}
+# do a nice violin plot
+
+sns.set(style="whitegrid", palette="bright", color_codes=True, rc = {'figure.figsize':(12,10)})
+
+
+# Draw a nested violinplot and split the violins for easier comparison
+p = sns.violinplot(x="menu_prf", y="DaysBetLogins", hue="InitialStatus",
+               split=True, inner="quart",
+               palette={"Active": "b", "Inactive": "y"},
+               data=allData)
+p.set(ylim=(0, 200))
+sns.despine(left=True)
+
+plt.show()
+```
+
+
+
+
+## Days Account Open & Login Hr
+### - "Active" and "Inactive" accounts have same account life distribution
+```{python, echo=F, warning=FALSE, message = FALSE, results=FALSE}
+# do a nice violin plot
+
+sns.set(style="whitegrid", palette="bright", color_codes=True, rc = {'figure.figsize':(12,10)})
+
+
+# Draw a nested violinplot and split the violins for easier comparison
+p = sns.violinplot(x="menu_prf", y="DaysAcctOpen", hue="InitialStatus",
+               split=True, inner="quart",
+               palette={"Active": "b", "Inactive": "y"},
+               data=allData)
+# p.set(ylim=(0, 200))
+sns.despine(left=True)
+plt.show()
+```
+
+
+### - Most logins during main business hours
+```{python, echo=F, warning=FALSE, message = FALSE, results=FALSE}
+fig = sns.FacetGrid(data=allData, hue='menu_prf', size = 8)
+
+fig.map(sns.distplot,'LoginHour', bins = 24, kde = False)
+
+fig.set(xlim=(0,24))
+
+fig.add_legend(title='menu_prf')
+plt.show()
+```
+
+
+
+### - Results consistent for Pre and Post Covid (Mar 15 used as cutoff)
+```{python covid, warning=FALSE, message = FALSE, results=FALSE}
+cutoff = dt.datetime(2020,3,15)
+
+# make a function for Covid
+
+def covid_id(date):
+    if date < cutoff:
+        return 'PreCovid'
+    else:
+        return 'Covid'
+        
+        
+allData['LastLoginDateClean'] = pd.to_datetime(allData['LastLoginDateClean'], format='%Y-%m-%d')
+
+allData['Covid'] = allData['LastLoginDateClean'].apply(covid_id)
+
+
+fig = sns.FacetGrid(data=allData, hue='menu_prf', size = 7, col = 'Covid')
+
+fig.map(sns.distplot,'LoginHour', bins = 24, kde = False)
+
+fig.set(xlim=(0,24))
+
+fig.add_legend(title='menu_prf')
+
+plt.show()
+```
+
+
+## By Year Cohort
+### - Only 2017, 2018, 2019 have valid balanced data
+```{python cohort, warning=FALSE, message = FALSE, results=FALSE}
+allData['Cohort'] = allData['SetupDate'].dt.year
+
+allData['Cohort'].value_counts()
+
+# do a nice violin plot
+
+cohortData = allData[(allData['Cohort'] > 2016) & (allData['Cohort'] < 2020)]
+
+
+sns.set(style="whitegrid", palette="bright", color_codes=True, rc = {'figure.figsize':(12,10)})
+
+
+# Draw a nested violinplot and split the violins for easier comparison
+p = sns.violinplot(x="Cohort", y="DaysBetLogins", hue="InitialStatus",
+               split=True, inner="quart",
+               palette={"Active": "b", "Inactive": "y"},
+               data=cohortData)
+p.set(ylim=(0, 200))
+sns.despine(left=True)
+
+
+
+plt.show()
+```
+

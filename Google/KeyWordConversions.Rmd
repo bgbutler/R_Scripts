@@ -1,0 +1,324 @@
+---
+title: "Keyword Conversions"
+author: "Bryan Butler"
+date: "8/12/2020"
+output:
+    html_document:
+    toc: false
+    toc_depth: 1
+    fig_crop: no
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+library(reticulate)
+knitr::knit_engines$set(python = reticulate::eng_python)
+knitr::opts_chunk$set(echo = FALSE, warning= FALSE, error =TRUE, message = FALSE, cache.lazy = FALSE, comment=NA, fig.width=10, fig.height=8, python.reticulate=FALSE)
+use_condaenv('timeseries')
+```
+
+
+# {.tabset .tabset-fade .tabset-pills}
+
+
+<style>
+  .main-container {
+    max-width: 1200px !important;
+    margin-left: auto;
+    margin-right: auto;
+  }
+</style>
+
+
+
+```{python importLibaries, echo=FALSE}
+# Base libraries
+import PyQt5
+import pandas as pd
+from pandas import Series, DataFrame
+
+import numpy as np
+
+import os
+import math
+from itertools import cycle
+
+# plotting libraries
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+from matplotlib.pyplot import figure
+
+# stats models tools
+import statsmodels.api as sm
+
+# Dickey-Fuller test for stationarity
+from statsmodels.tsa.stattools import adfuller
+
+# seasonal decomposition
+from statsmodels.tsa.seasonal import seasonal_decompose
+
+# for expanding plots
+from pylab import rcParams
+
+
+# ignore harmless warnings
+import warnings
+warnings.filterwarnings('ignore')
+
+# get the time series module
+import timeseries_module as ts
+import timeseries_module_v1 as ts1
+
+# import more libraries
+
+import statsmodels.api as sm
+from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
+from statsmodels.tsa.ar_model import AR, ARResults
+from statsmodels.tsa.arima_model import ARMA, ARIMA, ARMAResults, ARIMAResults
+from statsmodels.tsa.statespace.sarimax import SARIMAX, SARIMAXResults
+
+from statsmodels.tools.eval_measures import mse, rmse
+
+
+from pylab import rcParams
+
+import datetime as dt
+
+
+```
+
+
+```{python chDir, echo=FALSE}
+
+myPath = os.path.join('C:\\', 'Users', 'bbutler', 'Documents\DigitalAnalytics')
+
+os.chdir(myPath)
+
+data = pd.read_csv('HelocTermsMulti.csv',index_col='Week', parse_dates=True)
+
+data.columns = ['equity_loan', 'home_equity']
+
+conversions = pd.read_csv('HELOCKWConversion.csv',index_col='Week', parse_dates=True)
+
+# merge the data frame
+
+
+combined = pd.concat([data, conversions], axis = 1)
+
+
+```
+
+
+## Equity Loan Series
+### - Series are highly correlated with peaks and valleys
+### - Converstion activity concentrated on the 15th of the Month with a smaller spike the following week
+```{python nicePlot, echo=FALSE, warning=FALSE, message = FALSE, results=FALSE}
+# make the nice plot
+
+# set the figure size
+fig = plt.figure(figsize = (12,10))
+
+# the series
+ax1 = fig.add_subplot(211)
+ax1.plot(combined.index.values, combined['equity_loan'], color = 'blue', label = 'equity loan')
+
+# plot the legend for the first plot
+ax1.legend(loc = 'upper right', fontsize = 14)
+
+plt.ylabel('Relative Volume', fontsize=16)
+plt.setp(ax1.get_yticklabels(), fontsize=14) 
+
+# Hide the top x axis
+ax1.axes.get_xaxis().set_visible(True)
+dstart = dt.datetime(2020, 3, 22)
+dend = dt.datetime(2020, 8, 9)
+
+ax1.set_xlim([dstart,dend])
+
+
+# plot 212 is the home equity series
+
+# plot series
+ax2 = fig.add_subplot(212)
+ax2.plot(combined.index.values, combined['equity_loan_AppStarts'], color = 'orange', label = 'App Starts')
+
+# plot the legend for the second plot
+ax2.legend(loc = 'upper right', fontsize = 14)
+
+# set the fontsize for the bottom plot
+plt.ylabel('App Starts', fontsize=16)
+# plt.setp(ax1.get_yticklabels(), fontsize=14) 
+# plt.setp(ax1.get_xticklabels(), fontsize=14)
+ax2.set_xlim([dstart,dend])
+
+
+plt.tight_layout()
+plt.show();
+
+
+
+
+```
+
+
+## Home Equity Series
+### - Series are highly correlated with peaks and valleys
+### - Converstion activity concentrated on the 15th of the Month, although limited data
+```{python nicePlot2, echo=FALSE, warning=FALSE, message = FALSE, results=FALSE}
+# make the nice plot
+
+# set the figure size
+fig = plt.figure(figsize = (12,10))
+
+# the series
+ax1 = fig.add_subplot(211)
+ax1.plot(combined.index.values, combined['home_equity'], color = 'blue', label = 'home equity')
+
+# plot the legend for the first plot
+ax1.legend(loc = 'upper right', fontsize = 14)
+
+plt.ylabel('Relative Volume', fontsize=16)
+plt.setp(ax1.get_yticklabels(), fontsize=14) 
+
+# Hide the top x axis
+ax1.axes.get_xaxis().set_visible(True)
+dstart = dt.datetime(2020, 3, 22)
+dend = dt.datetime(2020, 8, 9)
+
+ax1.set_xlim([dstart,dend])
+
+
+# plot 212 is the home equity series
+
+# plot series
+ax2 = fig.add_subplot(212)
+ax2.plot(combined.index.values, combined['home_equity_AppStarts'], color = 'orange', label = 'App Starts')
+
+# plot the legend for the second plot
+ax2.legend(loc = 'upper right', fontsize = 14)
+
+# set the fontsize for the bottom plot
+plt.ylabel('App Starts', fontsize=16)
+# plt.setp(ax1.get_yticklabels(), fontsize=14) 
+# plt.setp(ax1.get_xticklabels(), fontsize=14)
+ax2.set_xlim([dstart,dend])
+
+
+plt.tight_layout()
+plt.show();
+
+
+
+
+```
+
+
+
+## Equity Loan vs App Starts
+### - Negative correlation between search term volume and conversion
+```{python AppStarts}
+sns.set(style="darkgrid", color_codes=True)
+g = sns.jointplot('equity_loan', 'equity_loan_AppStarts', data=combined,
+                  kind="reg", truncate=False,
+                  ylim=(0, 15),
+                  color="m", height=7)
+
+plt.show()
+```
+
+
+
+### - Slight negative correlation between search term volume and conversion
+```{python eqLoan}
+sns.set(style="darkgrid", color_codes=True)
+g = sns.jointplot('equity_loan', 'equity_loan_google', data=combined,
+                  kind="reg", truncate=False,
+                  ylim=(0, 15),
+                  color="m", height=7)
+
+plt.show()
+
+```
+
+
+
+## Home Equity Correlation
+### - Not a strong correlation between search term volume and app starts
+### - Very few data points to work with
+```{python homeEQAppStarts}
+sns.set(style="darkgrid", color_codes=True)
+g = sns.jointplot('home_equity', 'home_equity_AppStarts', data=combined,
+                  kind="reg", truncate=False,
+                  ylim=(0, 5),
+                  color="m", height=7)
+
+plt.show()
+
+```
+
+
+
+### - Not a strong correlation between search term volume and conversion
+```{python homeEQ}
+sns.set(style="darkgrid", color_codes=True)
+g = sns.jointplot('home_equity', 'home_equity_google', data=combined,
+                  kind="reg", truncate=False,
+                  ylim=(0, 30),
+                  color="m", height=7)
+
+plt.show()
+
+```
+
+
+
+
+
+```{python addBing}
+combined['equity_loan_both'] = combined['equity_loan_google'] + combined['equity_loan_bing']
+combined['home_equity_both'] = combined['home_equity_google'] + combined['home_equity_bing']
+
+```
+
+
+## Equity Loan w/Bing
+### - Add Bing results amplifies correlation
+### - Largely driven by 2 points (outliers?)
+### - Not a strong correlation between search term volume and conversion
+```{python eqLoan1}
+sns.set(style="darkgrid", color_codes=True)
+g = sns.jointplot('equity_loan', 'equity_loan_both', data=combined,
+                  kind="reg", truncate=False,
+                  ylim=(0, 40),
+                  color="m", height=7)
+
+plt.show()
+
+```
+
+
+
+
+
+
+
+
+
+## Home Equity w/Bing
+### - Add Bing results in to see if they amplify correlation
+### - Some added correlation between search term volume and conversion
+```{python homeEQ1}
+sns.set(style="darkgrid", color_codes=True)
+g = sns.jointplot('home_equity', 'home_equity_both', data=combined,
+                  kind="reg", truncate=False,
+                  ylim=(0, 100),
+                  color="m", height=7)
+
+plt.show()
+
+```
+
+
+
+
