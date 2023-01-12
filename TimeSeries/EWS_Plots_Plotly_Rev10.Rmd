@@ -1,0 +1,3146 @@
+---
+title: "Key Volume Forecasts"
+author: " "
+date: "2/3/2020"
+output:
+    html_document:
+    toc: false
+    toc_depth: 1
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning= FALSE, error =TRUE, message = FALSE, cache.lazy = FALSE, comment=NA, fig.width=12, fig.height=8)
+```
+
+
+```{r, loadR, echo=FALSE}
+library(reticulate)
+library(tidyverse)
+library(DT)
+library(ggplot2)
+library(scales)
+library(plotly)
+library(withr)
+library(scales)
+options(scipen=999)
+```
+
+
+
+```{r, echo=FALSE}
+# function for exporting tables
+# takes a dataframe and number of digits
+# use 0 digits for integers and 2 for numeric/costs
+
+makeTable <- function(df, end_col, dec_pts, begin=1){
+    datatable(df, extensions = 'Buttons',
+              options = list(dom = 'Bfrtip',
+                             pageLength = 24,
+                             buttons = list("excel", "csv"),
+                             autowidth = FALSE,
+                             fixedColumns = TRUE,
+                             columnDefs = list(list(className = 'dt-center', width = '200px', targets = c(1, 2))))) %>% formatRound(columns = c(begin:end_col), digits = dec_pts) 
+}
+
+
+```
+
+
+```{r, plottingFunctions, echo=FALSE}
+#########     PLOTTING FUNCTIONS #######
+
+# PLOTTING THEME
+theme_bryan <- function () { 
+    theme(axis.text.x = element_text(size = 12, color = 'navy'),
+          plot.title = element_text(size = 20, face = "bold", color = 'navy'),
+          legend.position = 'bottom',
+          axis.text.y = element_text(size = 12, color = 'navy'),
+          axis.title.x = element_blank(),
+          axis.title.y = element_blank(),
+          strip.text.x = element_text(size = 12, face = 'bold'),
+          strip.background = element_rect(fill = 'light blue'))
+}
+
+
+# PLOT BACKTEST
+plot_backtest <- function(start_date, decimal = FALSE){
+# function to plot the backtest
+# inputs: plot_df, starting date of the series
+# output: interactive plot of the actual and the model backtest
+    
+# set the end of the plot
+back_end <- as.Date(tail(r_train$week_ending, 1))    
+
+# create the plot variable
+p <- ggplot() +
+    
+    # add Backtest
+    geom_line(data=r_back, mapping = aes(x=week_ending, y=Backtest_Model,
+                                       color = 'Backtest Model'), linetype='solid') + 
+    
+    # add actuals
+    geom_line(data=r_train, mapping = aes_string(x="week_ending", y=series,
+                                        color = "series"),linetype='solid') + 
+    
+    # format plot
+    scale_linetype_manual() + 
+    scale_color_manual(values = myPal, name = "Series")
+  
+  
+   # set the y axis based on decimal or not
+   if(decimal) {
+     p = p + scale_y_continuous(label = number_format(accuracy = 0.01),
+                                breaks = scales::pretty_breaks(n = 16))
+       }
+
+   else {
+     p = p + scale_y_continuous(label = comma)
+       }
+
+    
+   p = p + scale_x_date(breaks = pretty_breaks(20),
+                 limits = c(as.Date(start_date), back_end)) + 
+    
+    # apply custom theme
+    theme_bryan() + 
+    
+    # customize the plot
+    # rotate the text
+    theme(axis.text.x = element_text(angle= 45, hjust = 1)) + 
+    labs(fill = 'Series') + 
+    guides(color = guide_legend(reverse = FALSE)) + 
+    
+    # add the holiday line
+    geom_vline(xintercept = as.numeric(holiday$week_ending),
+               linetype='dotted', colour = 'red', alpha =0.3) 
+
+    # get the plotting parameters
+    params <- ggplot_build(p)$layout$panel_params[[1]][c("x.range","y.range")]
+    params <- unlist(params)
+    y_pos <- as.numeric(params[3])
+    y_pos <- y_pos
+
+    # output the plot
+    subplot(with_options(list(digits = 0), 
+                      ggplotly(p, tooltip = c("x", "y")))) %>% 
+        layout(legend = list(orientation = 'h', y = y_pos, x = 0))
+}
+
+
+
+# PLOT PREDICTIONS
+# make the prediction plotting function
+plot_predictions <- function(start_date, decimal=FALSE, intervals=FALSE)
+  {
+    # function to plot the predictions, confidence interval and actuals
+    # inputs: plot_df, starting date of the series, r-pred
+    # output: interactive plot of the actual and the model backtest
+    
+    # set the end parameter first differs from the other end
+    pred_end <- as.Date(tail(r_pred$week_ending, 1))
+    
+    cols <- c("Backtest Model", "series", "Predictions", "series_prev_fcast")
+    
+    # prev_fcast <- fcastData
+    
+    p <- ggplot() + 
+    # add the backtest
+    geom_line(data=r_back, mapping = aes(x=week_ending, y=Backtest_Model,
+                                       color = 'Backtest Model'), linetype='solid') + 
+    # add the actual series
+    geom_line(data=r_train, mapping = aes_string(x='week_ending', y=series,
+                                       color = 'series'), linetype='solid') +
+    
+    # predictions
+    geom_line(data=r_pred, mapping = aes(x=week_ending, y=Predictions,
+                                       color = 'Predictions'), linetype='solid') +
+    
+    
+    # this works  
+    # geom_line(data=fcastData, mapping = aes(x=week_ending, y=gross_rides,
+    #                                         color = 'prev_fcast'), linetype='dashed')  
+        
+    geom_line(data=prev_fcast, mapping = aes_string(x='week_ending', y=series_prev_fcast,
+                                             color = 'series_prev_fcast'), linetype='solid')
+    
+    if(intervals){
+      
+    p = p +
+    
+    # upper forecast limit
+    geom_line(data=r_pred, mapping = aes(x=week_ending, y=upper_conf_limit,
+                                       color = 'upper_limit'), linetype='solid') + 
+    # lower forecast limit
+    geom_line(data=r_pred, mapping = aes(x=week_ending, y=lower_conf_limit,
+                                       color = 'lower_limit'), linetype='solid')
+    
+  
+    # fill between lines
+    geom_ribbon(data=r_pred, aes(x = week_ending, 
+                                 ymin=lower_conf_limit,
+                                 ymax=upper_conf_limit),
+                fill="blue", alpha=0.2)
+    
+    }
+    
+      
+    # format the y axis for decimals 
+    if(decimal) {
+     p = p + scale_y_continuous(label = number_format(accuracy = 0.01),
+                                breaks = scales::pretty_breaks(n = 16))
+     }
+
+    else {
+     p = p + scale_y_continuous(label = comma)
+     }
+
+    # resume plotting after if statement for decimal
+    p = p + scale_x_date(breaks = pretty_breaks(20),
+                 limits = c(as.Date(start_date), pred_end)) +  
+      
+    # format the plot    
+    scale_linetype_manual() + 
+    scale_color_manual(values = pred_pal, name = "Series") +
+    
+      
+        
+    # add the custom theme    
+    theme_bryan() + 
+    
+    # customize the plot
+    # rotate the text
+    theme(axis.text.x = element_text(angle= 45, hjust = 1)) + 
+    labs(fill = 'Series') + 
+    guides(color = guide_legend(reverse = FALSE)) +
+    
+
+    # add the holiday lines
+    # actual    
+    geom_vline(xintercept = as.numeric(holiday$week_ending),
+               linetype='dotted', colour = 'red', alpha =0.5) + 
+        
+    # exogenous data lines
+        geom_vline(xintercept = as.numeric(r_exog_lines$week_ending),
+                   linetype='dotted', colour = 'red', alpha =0.5)
+    
+    # output the plot
+    subplot(with_options(list(digits = 0),
+                         ggplotly(p))) %>% 
+        layout(legend = list(orientation = 'v', y = .1, x = 0))
+}
+
+
+```
+
+
+
+# {.tabset .tabset-fade .tabset-pills}
+
+<style>
+  .main-container {
+    max-width: 1200px !important;
+    margin-left: auto;
+    margin-right: auto;
+  }
+</style>
+
+
+
+
+```{python, echo=FALSE}
+# import the base libraries
+# standard libraries
+import PyQt5
+import pandas as pd
+import numpy as np
+from pandas import Series, DataFrame
+import os
+import math
+from itertools import cycle
+import datetime
+import warnings
+
+
+
+# plotting libraries
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+
+# to visualize all of the columns in the dataframe
+pd.pandas.set_option('display.max_columns', None)
+pd.options.display.float_format = '{:,.2f}'.format
+
+import re
+import csv
+import json
+import ast
+from pandas.io.json import json_normalize
+
+pd.options.display.max_colwidth = 2000
+pd.set_option('display.max_rows', 100)
+
+
+# for database connectivity
+import psycopg2
+import getpass
+
+# print(os.getcwd())
+```
+
+
+```{python, echo=FALSE}
+# import all of the stats functions to be used
+
+import timeseries_module as ts
+import datetime as dt
+```
+
+
+```{python, loadData, echo = FALSE}
+# load the two data files
+# get the oos data in weeks
+
+oos = pd.read_csv('2019_2020_holidays.csv', index_col='date', parse_dates = True)
+# oos.head()
+
+# get weekly data
+wdf = pd.read_csv('wdf_cutoff_2020-02-01.csv', index_col='date_ride', parse_dates = True)
+
+# get previous forecast file
+fcastData = pd.read_csv('wide_ews_fcast_02012020v2.txt', sep='\t', index_col='week_ending', parse_dates = True)
+
+# rename key columns
+# change names of gross_rides, riders and cpm
+
+col_dict = {'gross_rides_fcast': 'gross_rides', 'riders_fcast': 'riders', 'cpm_fcast': 'cpm'} 
+
+fcastData.columns = [col_dict.get(x, x) for x in fcastData.columns]
+
+
+
+
+# remove the upper and lower
+# drop the confidence limits
+regex = r"(upper_[a-z]*)|(lower_[a-z]*)"
+fcastData = fcastData[fcastData.columns.drop(list(fcastData.filter(regex=regex)))]
+```
+
+
+```{python, echo = FALSE}
+# cut the data for verifiedd paid lag of ~ 66 days
+
+vp_lag_days = 66
+
+vp_lag_wks = int(vp_lag_days/7)+ (vp_lag_days % 7 > 0)
+
+
+vpdf = wdf.iloc[:-vp_lag_wks]
+
+```
+
+
+
+```{python, echo=FALSE}
+# set data fields for OOS Modeling
+
+# set up for forecasting and backtesting
+# set the ranges
+train = wdf.copy()
+end = len(train)
+
+
+########## KEY PARAMETERS TO EVALUATE 
+# roll_fwd
+# short_horizon
+# reset the exogenous series
+# roll forward what has occurred
+# reset the horizon from 18 to 9
+roll_fwd = 18
+short_horizon = 13
+
+short_exog = oos.iloc[roll_fwd:roll_fwd + short_horizon]
+
+```
+
+
+
+```{python, echo=FALSE}
+# prep for r conversion
+def prepare_r_conversion(df, column_to_change, new_name='week_ending'):
+    # take in a dataframe and flatten and prepre for r object
+    # input: 
+        # df: python dataframe
+        # r_object: name to be converted to
+    # return:
+        # python dataframe flattened to be ready for conversion to r object
+    r_object = df.copy()
+    r_object.reset_index(level= 0, inplace = True)
+    r_object.rename(columns = {column_to_change: new_name}, inplace = True)
+    return(r_object)
+    
+```
+
+
+```{python, echo=FALSE}
+# fixed for training and exogenous
+# training data
+r_df = prepare_r_conversion(train, 'date_ride')
+
+# exogenous series
+r_exog = prepare_r_conversion(short_exog, 'date')
+
+# previous forecast data
+prev_fcast = prepare_r_conversion(fcastData, 'week_ending')
+
+
+```
+
+
+```{r, echo=FALSE}
+# work on exegenous data
+# make the conversion from python to r
+r_exog <- reticulate::py$r_exog
+
+# change the col names
+colnames(r_exog) <- c('week_ending', 'holiday')
+
+# clean up the date time
+r_exog$week_ending <- as.Date(r_exog$week_ending)
+
+# filter for holidays only
+r_exog_lines <- r_exog %>% filter(holiday == 1)
+```
+
+
+```{r, echo=FALSE}
+# get the training data
+r_train <- reticulate::py$r_df
+
+# make prev fcast r object
+prev_fcast <- reticulate::py$prev_fcast
+
+
+# make all the dates for week_ending
+r_train$week_ending <- as.Date(r_train$week_ending)
+prev_fcast$week_ending <- as.Date(prev_fcast$week_ending)
+
+
+```
+
+
+```{r, echo=FALSE}
+# get the holidays
+holiday <- r_train %>% filter(holiday == 1) %>% select(week_ending, holiday)
+holiday$week_ending <- as.Date(holiday$week_ending)
+
+# set colors
+myPal <- c('orange', 'royalblue')
+
+# palette for : backtest, actual, predictions, previous
+pred_pal <- c('orange', 'royalblue', 'red', 'magenta')
+
+# set the start date for predictions
+back_start_date <- '2015-01-01'
+
+pred_start_date <- '2019-01-01'
+
+```
+
+
+
+## Gross Rides
+```{python, echo=FALSE, warning=FALSE, message = FALSE}
+# current series
+series = 'gross_rides'
+
+series_fcast = series + '_fcast'
+
+# use for last forecast
+series_prev_fcast = 'prev_' + series_fcast
+
+train.index = pd.DatetimeIndex(train.index.values,
+                               freq=train.index.inferred_freq)
+
+model = ts.build_model(train[series],
+                       p=2,
+                       d=1,
+                       q=2,
+                       S=12,
+                       exog_data = train['holiday'],
+                       P=1,
+                       D=1,
+                       Q=0)
+
+# model.summary()
+```
+
+
+```{python, echo=FALSE}
+# ts.get_dw(model)
+```
+
+
+```{python, echo=FALSE}
+backtest = ts.backtest_model(model,
+                             train = train,
+                             exog_data=train['holiday'][1:],
+                             end = len(train)-1)
+
+backtest = pd.DataFrame(backtest)
+```
+
+
+```{python, echo=FALSE}
+# make predictions
+predictions = ts.make_predictions(model,
+                               series + ' SARIMAX',
+                               start=len(train),
+                               end= len(train) + len(short_exog)-1,
+                               exog_data=short_exog)
+                               
+                               
+# make the OOS intervals
+intervals = ts.get_oos_conf_interval(model=model,
+                                     steps_ahead=short_horizon,
+                                     exog_data = short_exog)
+
+# make the confidence df
+conf_df = ts.make_oos_plot_df(model=model,
+                           steps_ahead=short_horizon,
+                           exog_data = short_exog)                                    
+
+```
+
+
+```{python, echo=FALSE}
+# specific for each series
+r_back = prepare_r_conversion(backtest, 'index')
+
+r_pred = prepare_r_conversion(conf_df, 'index')    
+```
+
+
+```{r, echo = FALSE}
+# get the backtest data
+r_back <- reticulate::py$r_back
+
+# make the python series name a series object
+series <- py$series
+series_prev_fcast <- py$series_prev_fcast
+
+# rename the desired column
+# mtcars %>% rename_at(vars(col_name), ~ new_name)
+prev_fcast <- prev_fcast %>% rename_at(vars(series), ~ series_prev_fcast)
+
+```
+
+
+
+```{r, echo=FALSE}
+# convert r_pred
+r_pred <- reticulate::py$r_pred
+
+# clean up column names to clean numbers
+colnames(r_pred) <- c('week_ending', 'Predictions',
+                           'lower_conf_limit', 'upper_conf_limit')
+# convert to date format
+r_pred$week_ending <- as.Date(r_pred$week_ending)
+```
+
+
+
+```{r, echo=FALSE}
+# make the dates
+r_back$week_ending <- as.Date(r_back$week_ending)
+
+r_pred$week_ending <- as.Date(r_pred$week_ending)
+```
+
+
+### Fit of Model vs Actual
+```{r, echo=FALSE}
+# plot the backtest
+plot_backtest(start_date = back_start_date)
+```
+
+
+### Plot of Predictions
+```{r, echo=FALSE}
+# add previous fcast
+plot_predictions(start_date = pred_start_date)
+```
+
+
+```{python, echo=FALSE}
+gross_rides_fcast = ts.oos_weekly_df(model=model,
+                            steps_ahead=short_horizon,
+                            exog_data = short_exog,
+                            series = series,
+                            add_date = False)
+
+fcast = prepare_r_conversion(gross_rides_fcast, 'index')
+```
+
+
+### Table of Forecast Values
+<div style = "width:60%; height:auto; margin: auto;">
+```{r, echo=FALSE}
+r_df <- reticulate::py$fcast
+
+r_df$week_ending <- as.Date(r_df$week_ending)
+r_df <- r_df[,c(1,2)]
+
+makeTable(r_df, begin=2, end_col=2, 0)
+
+```
+</div>
+
+
+
+## Riders
+```{python, echo=FALSE, warning=FALSE, message = FALSE}
+warnings.filterwarnings('ignore')
+
+# modeling series
+series = 'riders'
+series_fcast = series + '_fcast'
+
+# use for last forecast
+series_prev_fcast = 'prev_' + series_fcast
+
+train.index = pd.DatetimeIndex(train.index.values,
+                               freq=train.index.inferred_freq)
+
+model = ts.build_model(train[series],
+                       p=0,
+                       d=1,
+                       q=2,
+                       S=12,
+                       exog_data = train['holiday'],
+                       P=1,
+                       D=1,
+                       Q=1)
+
+# model.summary()
+```
+
+
+```{python, echo=FALSE}
+# ts.get_dw(model)
+```
+
+
+
+```{python, echo=FALSE}
+backtest = ts.backtest_model(model,
+                             train = train,
+                             exog_data=train['holiday'][1:],
+                             end = len(train)-1)
+backtest = pd.DataFrame(backtest)
+```
+
+
+```{python, echo=FALSE}
+# make predictions
+predictions = ts.make_predictions(model,
+                               series + ' SARIMAX',
+                               start=len(train),
+                               end= len(train) + len(short_exog)-1,
+                               exog_data=short_exog)
+                               
+                               
+# make the OOS intervals
+intervals = ts.get_oos_conf_interval(model=model,
+                                     steps_ahead=short_horizon,
+                                     exog_data = short_exog)
+
+# make the confidence df
+conf_df = ts.make_oos_plot_df(model=model,
+                           steps_ahead=short_horizon,
+                           exog_data = short_exog)                                    
+
+```
+
+
+```{python, echo=FALSE}
+# specific for each series
+r_back = prepare_r_conversion(backtest, 'index')
+
+r_pred = prepare_r_conversion(conf_df, 'index')    
+```
+
+
+```{r, echo = FALSE}
+# get the backtest data
+r_back <- reticulate::py$r_back
+
+# make the python series name a series object
+series <- py$series
+series_prev_fcast <- py$series_prev_fcast
+
+# rename the desired column
+# mtcars %>% rename_at(vars(col_name), ~ new_name)
+prev_fcast <- prev_fcast %>% rename_at(vars(series), ~ series_prev_fcast)
+```
+
+
+
+```{r, echo=FALSE}
+# convert r_pred
+r_pred <- reticulate::py$r_pred
+
+# clean up column names to clean numbers
+colnames(r_pred) <- c('week_ending', 'Predictions',
+                           'lower_conf_limit', 'upper_conf_limit')
+# convert to date format
+r_pred$week_ending <- as.Date(r_pred$week_ending)
+```
+
+
+
+```{r, echo=FALSE}
+# make the dates
+
+r_back$week_ending <- as.Date(r_back$week_ending)
+
+r_pred$week_ending <- as.Date(r_pred$week_ending)
+```
+
+
+### Fit of Model vs Actual
+```{r, echo=FALSE}
+# plot the backtest
+plot_backtest(start_date = back_start_date)
+```
+
+
+### Plot of Predictions
+```{r, echo=FALSE}
+# palette for : backtest, actual, predictions, prev forecast
+
+pred_pal <- c('orange', 'red', 'magenta', 'royalblue')
+
+plot_predictions(start_date = pred_start_date)
+```
+
+
+```{python, echo=FALSE}
+riders_fcast = ts.oos_weekly_df(model=model,
+                            steps_ahead=short_horizon,
+                            exog_data = short_exog,
+                            series = series,
+                            add_date = False)
+                            
+fcast = prepare_r_conversion(riders_fcast, 'index')
+```
+
+
+### Table of Forecast Values
+<div style = "width:60%; height:auto; margin: auto;">
+```{r, echo=FALSE}
+r_df <- reticulate::py$fcast
+
+r_df$week_ending <- as.Date(r_df$week_ending)
+r_df <- r_df[,c(1,2)]
+
+makeTable(r_df, begin=2, end_col=2, 0)
+
+
+```
+</div>
+
+
+```{python, echo=FALSE}
+# set the ranges
+# original forecast horizon
+orig_horizon = 18
+
+# step forward period to update the forecast (rolling)
+month_step = 4
+
+# make the training set
+train = vpdf.copy()
+
+# set the end point
+end = len(train)
+
+# set the truncation point to excude vp lag
+
+# reset exog
+oos_exog = oos.iloc[month_step:short_horizon + orig_horizon]
+
+horizon = len(oos_exog)
+
+```
+
+
+```{python, echo=FALSE}
+# fixed for training and exogenous
+# training data
+r_df = prepare_r_conversion(train, 'date_ride')
+
+# exogenous series
+r_exog = prepare_r_conversion(oos_exog, 'date')
+
+```
+
+
+```{r, echo=FALSE}
+# work on exegenous data
+# make the conversion from python to r
+r_exog <- reticulate::py$r_exog
+
+# change the col names
+colnames(r_exog) <- c('week_ending', 'holiday')
+
+# clean up the date time
+r_exog$week_ending <- as.Date(r_exog$week_ending)
+
+# filter for holidays only
+r_exog_lines <- r_exog %>% filter(holiday == 1)
+```
+
+
+```{r, echo=FALSE}
+# get the training data
+r_train <- reticulate::py$r_df
+
+
+# make all the dates
+r_train$week_ending <- as.Date(r_train$week_ending)
+```
+
+
+```{r, echo=FALSE}
+# get the holidays
+holiday <- r_train %>% filter(holiday == 1) %>% select(week_ending, holiday)
+holiday$week_ending <- as.Date(holiday$week_ending)
+```
+
+
+
+## Ver Pd Rides
+```{python, echo=FALSE, warning=FALSE, message = FALSE}
+warnings.filterwarnings('ignore')
+
+series = 'vp_rides'
+
+# use for last forecast
+series_prev_fcast = 'prev_' + series + '_fcast'
+
+train.index = pd.DatetimeIndex(train.index.values,
+                               freq=train.index.inferred_freq)
+
+model = ts.build_model(train[series],
+                       p=1,
+                       d=0,
+                       q=1,
+                       S=5,
+                       exog_data = train['holiday'],
+                       P=2,
+                       D=1,
+                       Q=0)
+
+# model.summary()
+```
+
+
+```{python, echo=FALSE}
+# ts.get_dw(model)
+```
+
+
+
+```{python, echo=FALSE}
+backtest = ts.backtest_model(model,
+                             train = train,
+                             exog_data=train['holiday'][1:],
+                             end = len(train)-1)
+backtest = pd.DataFrame(backtest)
+```
+
+
+```{python, echo=FALSE}
+# make predictions
+predictions = ts.make_predictions(model,
+                               series + ' SARIMAX',
+                               start=len(train),
+                               end= len(train) + horizon-1,
+                               exog_data=oos_exog)
+                               
+                               
+# make the OOS intervals
+intervals = ts.get_oos_conf_interval(model=model,
+                                     steps_ahead=horizon,
+                                     exog_data = oos_exog)
+
+# make the confidence df
+conf_df = ts.make_oos_plot_df(model=model,
+                           steps_ahead=horizon,
+                           exog_data = oos_exog)                                    
+
+```
+
+
+```{python, echo=FALSE}
+# specific for each series
+r_back = prepare_r_conversion(backtest, 'index')
+
+r_pred = prepare_r_conversion(conf_df, 'index')    
+```
+
+
+```{r, echo = FALSE}
+# get the backtest data
+r_back <- reticulate::py$r_back
+
+# make the python series name a series object
+series <- py$series
+series_prev_fcast <- py$series_prev_fcast
+
+# rename the desired column
+# mtcars %>% rename_at(vars(col_name), ~ new_name)
+prev_fcast <- prev_fcast %>% rename_at(vars(series), ~ series_prev_fcast)
+
+```
+
+
+
+```{r, echo=FALSE}
+# convert r_pred
+r_pred <- reticulate::py$r_pred
+
+# clean up column names to clean numbers
+colnames(r_pred) <- c('week_ending', 'Predictions',
+                           'lower_conf_limit', 'upper_conf_limit')
+# convert to date format
+r_pred$week_ending <- as.Date(r_pred$week_ending)
+```
+
+
+
+```{r, echo=FALSE}
+# make the dates
+
+r_back$week_ending <- as.Date(r_back$week_ending)
+
+r_pred$week_ending <- as.Date(r_pred$week_ending)
+```
+
+
+### Fit of Model vs Actual
+```{r, echo=FALSE}
+# plot the backtest
+myPal <- c('orange', 'royalblue')
+
+plot_backtest(start_date = back_start_date)
+```
+
+
+### Plot of Predictions
+```{r, echo=FALSE}
+# palette for : backtest, actual, predictions, upper, lower
+pred_pal <- c('orange', 'red', 'magenta', 'royalblue')
+
+plot_predictions(start_date = pred_start_date)
+```
+
+
+```{python, echo=FALSE}
+vp_rides = ts.oos_weekly_df(model=model,
+                            steps_ahead=horizon,
+                            exog_data = oos_exog,
+                            series = series,
+                            add_date = False)
+
+fcast = prepare_r_conversion(vp_rides, 'index')
+```
+
+
+### Table of Forecast Values
+<div style = "width:60%; height:auto; margin: auto;">
+```{r, echo=FALSE}
+r_df <- reticulate::py$fcast
+
+r_df$week_ending <- as.Date(r_df$week_ending)
+r_df <- r_df[,c(1,2)]
+
+makeTable(r_df, begin=2, end_col=2, 0)
+```
+</div>
+
+
+
+
+
+## Ver Pd Costs
+```{python, echo=FALSE, warning=FALSE, message = FALSE}
+warnings.filterwarnings('ignore')
+
+series = 'vp_costs'
+
+# use for last forecast
+series_prev_fcast = 'prev_' + series + '_fcast'
+
+train.index = pd.DatetimeIndex(train.index.values,
+                               freq=train.index.inferred_freq)
+
+model = ts.build_model(train[series],
+                       p=0,
+                       d=1,
+                       q=2,
+                       S=5,
+                       exog_data = train['holiday'],
+                       P=1,
+                       D=1,
+                       Q=1)
+
+# model.summary()
+```
+
+
+```{python, echo=FALSE}
+# ts.get_dw(model)
+```
+
+
+
+```{python, echo=FALSE}
+backtest = ts.backtest_model(model,
+                             train = train,
+                             exog_data=train['holiday'][1:],
+                             end = len(train)-1)
+backtest = pd.DataFrame(backtest)
+```
+
+
+```{python, echo=FALSE}
+# make predictions
+predictions = ts.make_predictions(model,
+                               series + ' SARIMAX',
+                               start=len(train),
+                               end= len(train) + horizon-1,
+                               exog_data=oos_exog)
+                               
+                               
+# make the OOS intervals
+intervals = ts.get_oos_conf_interval(model=model,
+                                     steps_ahead=horizon,
+                                     exog_data = oos_exog)
+
+# make the confidence df
+conf_df = ts.make_oos_plot_df(model=model,
+                           steps_ahead=horizon,
+                           exog_data = oos_exog)                                    
+
+```
+
+
+```{python, echo=FALSE}
+# specific for each series
+r_back = prepare_r_conversion(backtest, 'index')
+
+r_pred = prepare_r_conversion(conf_df, 'index')    
+```
+
+
+```{r, echo = FALSE}
+# get the backtest data
+# get the backtest data
+r_back <- reticulate::py$r_back
+
+# make the python series name a series object
+series <- py$series
+series_prev_fcast <- py$series_prev_fcast
+
+# rename the desired column
+# mtcars %>% rename_at(vars(col_name), ~ new_name)
+prev_fcast <- prev_fcast %>% rename_at(vars(series), ~ series_prev_fcast)
+
+```
+
+
+
+```{r, echo=FALSE}
+# convert r_pred
+r_pred <- reticulate::py$r_pred
+
+# clean up column names to clean numbers
+colnames(r_pred) <- c('week_ending', 'Predictions',
+                           'lower_conf_limit', 'upper_conf_limit')
+# convert to date format
+r_pred$week_ending <- as.Date(r_pred$week_ending)
+```
+
+
+
+```{r, echo=FALSE}
+# make the dates
+
+r_back$week_ending <- as.Date(r_back$week_ending)
+
+r_pred$week_ending <- as.Date(r_pred$week_ending)
+
+```
+
+
+### Fit of Model vs Actual
+```{r, echo=FALSE}
+# plot the backtest
+myPal <- c('orange', 'royalblue')
+
+
+plot_backtest(start_date = back_start_date)
+```
+
+
+### Plot of Predictions
+```{r, echo=FALSE}
+# palette for : backtest, actual, predictions, upper, lower
+pred_pal <- c('orange', 'red', 'magenta', 'royalblue')
+
+plot_predictions(start_date = pred_start_date)
+```
+
+
+```{python, echo=FALSE}
+vp_costs = ts.oos_weekly_df(model=model,
+                            steps_ahead=horizon,
+                            exog_data = oos_exog,
+                            series = series,
+                            add_date = False)
+
+fcast = prepare_r_conversion(vp_costs, 'index')
+```
+
+
+### Table of Forecast Values
+<div style = "width:60%; height:auto; margin: auto;">
+```{r, echo=FALSE}
+r_df <- reticulate::py$fcast
+
+r_df$week_ending <- as.Date(r_df$week_ending)
+r_df <- r_df[,c(1,2)]
+
+makeTable(r_df, begin=2, end_col=2, 0)
+```
+</div>
+
+
+## Ver Pd Miles
+```{python, echo=FALSE, warning=FALSE, message = FALSE}
+warnings.filterwarnings('ignore')
+
+series = 'vp_miles'
+
+# use for last forecast
+series_prev_fcast = 'prev_' + series + '_fcast'
+
+train.index = pd.DatetimeIndex(train.index.values,
+                               freq=train.index.inferred_freq)
+
+model = ts.build_model(train[series],
+                       p=1,
+                       d=1,
+                       q=1,
+                       S=5,
+                       exog_data = train['holiday'],
+                       P=2,
+                       D=1,
+                       Q=0)
+
+# model.summary()
+```
+
+
+```{python, echo=FALSE}
+# ts.get_dw(model)
+```
+
+
+
+```{python, echo=FALSE}
+backtest = ts.backtest_model(model,
+                             train = train,
+                             exog_data=train['holiday'][1:],
+                             end = len(train)-1)
+backtest = pd.DataFrame(backtest)
+```
+
+
+```{python, echo=FALSE}
+# make predictions
+predictions = ts.make_predictions(model,
+                               series + ' SARIMAX',
+                               start=len(train),
+                               end= len(train) + horizon-1,
+                               exog_data=oos_exog)
+                               
+                               
+# make the OOS intervals
+intervals = ts.get_oos_conf_interval(model=model,
+                                     steps_ahead=horizon,
+                                     exog_data = oos_exog)
+
+# make the confidence df
+conf_df = ts.make_oos_plot_df(model=model,
+                           steps_ahead=horizon,
+                           exog_data = oos_exog)                                    
+
+```
+
+
+```{python, echo=FALSE}
+# specific for each series
+r_back = prepare_r_conversion(backtest, 'index')
+
+r_pred = prepare_r_conversion(conf_df, 'index')    
+```
+
+
+```{r, echo = FALSE}
+# get the backtest data
+r_back <- reticulate::py$r_back
+
+# make the python series name a series object
+series <- py$series
+series_prev_fcast <- py$series_prev_fcast
+
+# rename the desired column
+# mtcars %>% rename_at(vars(col_name), ~ new_name)
+prev_fcast <- prev_fcast %>% rename_at(vars(series), ~ series_prev_fcast)
+
+```
+
+
+
+```{r, echo=FALSE}
+# convert r_pred
+r_pred <- reticulate::py$r_pred
+
+# clean up column names to clean numbers
+colnames(r_pred) <- c('week_ending', 'Predictions',
+                           'lower_conf_limit', 'upper_conf_limit')
+# convert to date format
+r_pred$week_ending <- as.Date(r_pred$week_ending)
+```
+
+
+
+```{r, echo=FALSE}
+# make the dates
+
+r_back$week_ending <- as.Date(r_back$week_ending)
+
+r_pred$week_ending <- as.Date(r_pred$week_ending)
+```
+
+
+### Fit of Model vs Actual
+```{r, echo=FALSE}
+# plot the backtest
+myPal <- c('orange', 'royalblue')
+
+
+plot_backtest(start_date = back_start_date)
+```
+
+
+### Plot of Predictions
+```{r, echo=FALSE}
+# palette for : backtest, actual, predictions, upper, lower
+pred_pal <- c('orange', 'red', 'magenta', 'royalblue')
+
+plot_predictions(start_date = pred_start_date)
+```
+
+
+```{python, echo=FALSE}
+vp_miles = ts.oos_weekly_df(model=model,
+                            steps_ahead=horizon,
+                            exog_data = oos_exog,
+                            series = series,
+                            add_date = False)
+fcast = prepare_r_conversion(vp_miles, 'index')
+```
+
+
+### Table of Forecast Values
+<div style = "width:60%; height:auto; margin: auto;">
+```{r, echo=FALSE}
+r_df <- reticulate::py$fcast
+
+r_df$week_ending <- as.Date(r_df$week_ending)
+r_df <- r_df[,c(1,2)]
+
+makeTable(r_df, begin=2, end_col=2, 0)
+```
+</div>
+
+
+
+
+## Ver Pd Amb Rides
+```{python, echo=FALSE, warning=FALSE, message = FALSE}
+warnings.filterwarnings('ignore')
+
+series = 'vp_ambulatory_rides'
+
+# use for last forecast
+series_prev_fcast = 'prev_' + series + '_fcast'
+
+
+train.index = pd.DatetimeIndex(train.index.values,
+                               freq=train.index.inferred_freq)
+
+model = ts.build_model(train[series],
+                       p=2,
+                       d=1,
+                       q=1,
+                       S=4,
+                       exog_data = train['holiday'],
+                       P=2,
+                       D=1,
+                       Q=1)
+
+# model.summary()
+```
+
+
+```{python, echo=FALSE}
+# ts.get_dw(model)
+```
+
+
+
+```{python, echo=FALSE}
+backtest = ts.backtest_model(model,
+                             train = train,
+                             exog_data=train['holiday'][1:],
+                             end = len(train)-1)
+backtest = pd.DataFrame(backtest)
+```
+
+
+```{python, echo=FALSE}
+# make predictions
+predictions = ts.make_predictions(model,
+                               series + ' SARIMAX',
+                               start=len(train),
+                               end= len(train) + horizon-1,
+                               exog_data=oos_exog)
+                               
+                               
+# make the OOS intervals
+intervals = ts.get_oos_conf_interval(model=model,
+                                     steps_ahead=horizon,
+                                     exog_data = oos_exog)
+
+# make the confidence df
+conf_df = ts.make_oos_plot_df(model=model,
+                           steps_ahead=horizon,
+                           exog_data = oos_exog)                                    
+
+```
+
+
+```{python, echo=FALSE}
+# specific for each series
+r_back = prepare_r_conversion(backtest, 'index')
+
+r_pred = prepare_r_conversion(conf_df, 'index')    
+```
+
+
+```{r, echo = FALSE}
+# get the backtest data
+r_back <- reticulate::py$r_back
+
+# make the python series name a series object
+series <- py$series
+series_prev_fcast <- py$series_prev_fcast
+
+# rename the desired column
+# mtcars %>% rename_at(vars(col_name), ~ new_name)
+prev_fcast <- prev_fcast %>% rename_at(vars(series), ~ series_prev_fcast)
+
+```
+
+
+
+```{r, echo=FALSE}
+# convert r_pred
+r_pred <- reticulate::py$r_pred
+
+# clean up column names to clean numbers
+colnames(r_pred) <- c('week_ending', 'Predictions',
+                           'lower_conf_limit', 'upper_conf_limit')
+# convert to date format
+r_pred$week_ending <- as.Date(r_pred$week_ending)
+```
+
+
+
+```{r, echo=FALSE}
+# make the dates
+
+r_back$week_ending <- as.Date(r_back$week_ending)
+
+r_pred$week_ending <- as.Date(r_pred$week_ending)
+```
+
+
+### Fit of Model vs Actual
+```{r, echo=FALSE}
+# plot the backtest
+myPal <- c('orange', 'royalblue')
+
+
+plot_backtest(start_date = back_start_date)
+```
+
+
+### Plot of Predictions
+```{r, echo=FALSE}
+# palette for : backtest, actual, predictions, upper, lower
+pred_pal <- c('orange','red', 'magenta', 'royalblue')
+
+plot_predictions(start_date = pred_start_date)
+```
+
+
+```{python, echo=FALSE}
+vp_ambulatory_rides = ts.oos_weekly_df(model=model,
+                            steps_ahead=horizon,
+                            exog_data = oos_exog,
+                            series = series,
+                            add_date = False)
+fcast = prepare_r_conversion(vp_ambulatory_rides, 'index')
+```
+
+
+### Table of Forecast Values
+<div style = "width:60%; height:auto; margin: auto;">
+```{r, echo=FALSE}
+r_df <- reticulate::py$fcast
+
+r_df$week_ending <- as.Date(r_df$week_ending)
+r_df <- r_df[,c(1,2)]
+
+makeTable(r_df, begin=2, end_col=2, 0)
+```
+</div>
+
+
+## Ver Pd Amb Costs
+```{python, echo=FALSE, warning=FALSE, message = FALSE}
+warnings.filterwarnings('ignore')
+
+series = 'vp_ambulatory_costs'
+
+# use for last forecast
+series_prev_fcast = 'prev_' + series + '_fcast'
+
+
+train.index = pd.DatetimeIndex(train.index.values,
+                               freq=train.index.inferred_freq)
+
+model = ts.build_model(train[series],
+                       p=1,
+                       d=0,
+                       q=1,
+                       S=5,
+                       exog_data = train['holiday'],
+                       P=2,
+                       D=1,
+                       Q=0)
+
+# model.summary()
+```
+
+
+```{python, echo=FALSE}
+# ts.get_dw(model)
+```
+
+
+
+```{python, echo=FALSE}
+backtest = ts.backtest_model(model,
+                             train = train,
+                             exog_data=train['holiday'][1:],
+                             end = len(train)-1)
+backtest = pd.DataFrame(backtest)
+```
+
+
+```{python, echo=FALSE}
+# make predictions
+predictions = ts.make_predictions(model,
+                               series + ' SARIMAX',
+                               start=len(train),
+                               end= len(train) + horizon-1,
+                               exog_data=oos_exog)
+                               
+                               
+# make the OOS intervals
+intervals = ts.get_oos_conf_interval(model=model,
+                                     steps_ahead=horizon,
+                                     exog_data = oos_exog)
+
+# make the confidence df
+conf_df = ts.make_oos_plot_df(model=model,
+                           steps_ahead=horizon,
+                           exog_data = oos_exog)                                    
+
+```
+
+
+```{python, echo=FALSE}
+# specific for each series
+r_back = prepare_r_conversion(backtest, 'index')
+
+r_pred = prepare_r_conversion(conf_df, 'index')    
+```
+
+
+```{r, echo = FALSE}
+# get the backtest data
+r_back <- reticulate::py$r_back
+
+# make the python series name a series object
+series <- py$series
+series_prev_fcast <- py$series_prev_fcast
+
+# rename the desired column
+# mtcars %>% rename_at(vars(col_name), ~ new_name)
+prev_fcast <- prev_fcast %>% rename_at(vars(series), ~ series_prev_fcast)
+
+```
+
+
+
+```{r, echo=FALSE}
+# convert r_pred
+r_pred <- reticulate::py$r_pred
+
+# clean up column names to clean numbers
+colnames(r_pred) <- c('week_ending', 'Predictions',
+                           'lower_conf_limit', 'upper_conf_limit')
+# convert to date format
+r_pred$week_ending <- as.Date(r_pred$week_ending)
+```
+
+
+
+```{r, echo=FALSE}
+# make the dates
+
+r_back$week_ending <- as.Date(r_back$week_ending)
+
+r_pred$week_ending <- as.Date(r_pred$week_ending)
+```
+
+
+### Fit of Model vs Actual
+```{r, echo=FALSE}
+# plot the backtest
+myPal <- c('orange', 'royalblue')
+
+
+plot_backtest(start_date = back_start_date)
+```
+
+
+### Plot of Predictions
+```{r, echo=FALSE}
+# palette for : backtest, actual, predictions, upper, lower
+pred_pal <- c('orange', 'red', 'magenta', 'royalblue')
+
+plot_predictions(start_date = pred_start_date)
+```
+
+
+```{python, echo=FALSE}
+vp_ambulatory_costs = ts.oos_weekly_df(model=model,
+                            steps_ahead=horizon,
+                            exog_data = oos_exog,
+                            series = series,
+                            add_date = False)
+fcast = prepare_r_conversion(vp_ambulatory_costs, 'index')
+```
+
+
+### Table of Forecast Values
+<div style = "width:60%; height:auto; margin: auto;">
+```{r, echo=FALSE}
+r_df <- reticulate::py$fcast
+
+r_df$week_ending <- as.Date(r_df$week_ending)
+r_df <- r_df[,c(1,2)]
+
+makeTable(r_df, begin=2, end_col=2, 0)
+```
+</div>
+
+
+## Ver Pd Amb Miles
+```{python, echo=FALSE, warning=FALSE, message = FALSE}
+warnings.filterwarnings('ignore')
+
+series = 'vp_ambulatory_miles'
+
+# use for last forecast
+series_prev_fcast = 'prev_' + series + '_fcast'
+
+
+train.index = pd.DatetimeIndex(train.index.values,
+                               freq=train.index.inferred_freq)
+
+model = ts.build_model(train[series],
+                       p=2,
+                       d=1,
+                       q=1,
+                       S=4,
+                       exog_data = train['holiday'],
+                       P=1,
+                       D=1,
+                       Q=1)
+
+# model.summary()
+```
+
+
+```{python, echo=FALSE}
+# ts.get_dw(model)
+```
+
+
+
+```{python, echo=FALSE}
+backtest = ts.backtest_model(model,
+                             train = train,
+                             exog_data=train['holiday'][1:],
+                             end = len(train)-1)
+backtest = pd.DataFrame(backtest)
+```
+
+
+```{python, echo=FALSE}
+# make predictions
+predictions = ts.make_predictions(model,
+                               series + ' SARIMAX',
+                               start=len(train),
+                               end= len(train) + horizon-1,
+                               exog_data=oos_exog)
+                               
+                               
+# make the OOS intervals
+intervals = ts.get_oos_conf_interval(model=model,
+                                     steps_ahead=horizon,
+                                     exog_data = oos_exog)
+
+# make the confidence df
+conf_df = ts.make_oos_plot_df(model=model,
+                           steps_ahead=horizon,
+                           exog_data = oos_exog)                                    
+
+```
+
+
+```{python, echo=FALSE}
+# specific for each series
+r_back = prepare_r_conversion(backtest, 'index')
+
+r_pred = prepare_r_conversion(conf_df, 'index')    
+```
+
+
+```{r, echo = FALSE}
+# get the backtest data
+r_back <- reticulate::py$r_back
+
+# make the python series name a series object
+series <- py$series
+series_prev_fcast <- py$series_prev_fcast
+
+# rename the desired column
+# mtcars %>% rename_at(vars(col_name), ~ new_name)
+prev_fcast <- prev_fcast %>% rename_at(vars(series), ~ series_prev_fcast)
+
+```
+
+
+
+```{r, echo=FALSE}
+# convert r_pred
+r_pred <- reticulate::py$r_pred
+
+# clean up column names to clean numbers
+colnames(r_pred) <- c('week_ending', 'Predictions',
+                           'lower_conf_limit', 'upper_conf_limit')
+# convert to date format
+r_pred$week_ending <- as.Date(r_pred$week_ending)
+```
+
+
+
+```{r, echo=FALSE}
+# make the dates
+
+r_back$week_ending <- as.Date(r_back$week_ending)
+
+r_pred$week_ending <- as.Date(r_pred$week_ending)
+```
+
+
+### Fit of Model vs Actual
+```{r, echo=FALSE}
+# plot the backtest
+myPal <- c('orange', 'royalblue')
+
+
+plot_backtest(start_date = back_start_date)
+```
+
+
+### Plot of Predictions
+```{r, echo=FALSE}
+# palette for : backtest, actual, predictions, upper, lower
+pred_pal <- c('orange', 'red', 'magenta', 'royalblue')
+
+plot_predictions(start_date = pred_start_date)
+```
+
+
+```{python, echo=FALSE}
+vp_ambulatory_miles = ts.oos_weekly_df(model=model,
+                            steps_ahead=horizon,
+                            exog_data = oos_exog,
+                            series = series,
+                            add_date = False)
+fcast = prepare_r_conversion(vp_ambulatory_miles, 'index')
+```
+
+
+### Table of Forecast Values
+<div style = "width:60%; height:auto; margin: auto;">
+```{r, echo=FALSE}
+r_df <- reticulate::py$fcast
+
+r_df$week_ending <- as.Date(r_df$week_ending)
+r_df <- r_df[,c(1,2)]
+
+makeTable(r_df, begin=2, end_col=2, 0)
+```
+</div>
+
+
+## Ver Pd Stretcher Rides
+```{python, echo=FALSE, warning=FALSE, message = FALSE}
+warnings.filterwarnings('ignore')
+
+series = 'vp_stretcher_rides'
+
+# use for last forecast
+series_prev_fcast = 'prev_' + series + '_fcast'
+
+train.index = pd.DatetimeIndex(train.index.values,
+                               freq=train.index.inferred_freq)
+
+model = ts.build_model(train[series],
+                       p=2,
+                       d=1,
+                       q=1,
+                       S=4,
+                       exog_data = train['holiday'],
+                       P=2,
+                       D=1,
+                       Q=1)
+
+# model.summary()
+```
+
+
+```{python, echo=FALSE}
+# ts.get_dw(model)
+```
+
+
+
+```{python, echo=FALSE}
+backtest = ts.backtest_model(model,
+                             train = train,
+                             exog_data=train['holiday'][1:],
+                             end = len(train)-1)
+backtest = pd.DataFrame(backtest)
+```
+
+
+```{python, echo=FALSE}
+# make predictions
+predictions = ts.make_predictions(model,
+                               series + ' SARIMAX',
+                               start=len(train),
+                               end= len(train) + horizon-1,
+                               exog_data=oos_exog)
+                               
+                               
+# make the OOS intervals
+intervals = ts.get_oos_conf_interval(model=model,
+                                     steps_ahead=horizon,
+                                     exog_data = oos_exog)
+
+# make the confidence df
+conf_df = ts.make_oos_plot_df(model=model,
+                           steps_ahead=horizon,
+                           exog_data = oos_exog)                                    
+
+```
+
+
+```{python, echo=FALSE}
+# specific for each series
+r_back = prepare_r_conversion(backtest, 'index')
+
+r_pred = prepare_r_conversion(conf_df, 'index')    
+```
+
+
+```{r, echo = FALSE}
+# get the backtest data
+r_back <- reticulate::py$r_back
+
+# make the python series name a series object
+series <- py$series
+series_prev_fcast <- py$series_prev_fcast
+
+# rename the desired column
+# mtcars %>% rename_at(vars(col_name), ~ new_name)
+prev_fcast <- prev_fcast %>% rename_at(vars(series), ~ series_prev_fcast)
+
+```
+
+
+
+```{r, echo=FALSE}
+# convert r_pred
+r_pred <- reticulate::py$r_pred
+
+# clean up column names to clean numbers
+colnames(r_pred) <- c('week_ending', 'Predictions',
+                           'lower_conf_limit', 'upper_conf_limit')
+# convert to date format
+r_pred$week_ending <- as.Date(r_pred$week_ending)
+```
+
+
+
+```{r, echo=FALSE}
+# make the dates
+
+r_back$week_ending <- as.Date(r_back$week_ending)
+
+r_pred$week_ending <- as.Date(r_pred$week_ending)
+```
+
+
+### Fit of Model vs Actual
+```{r, echo=FALSE}
+# plot the backtest
+myPal <- c('orange', 'royalblue')
+
+
+plot_backtest(start_date = back_start_date)
+```
+
+
+### Plot of Predictions
+```{r, echo=FALSE}
+# palette for : backtest, actual, predictions, upper, lower
+pred_pal <- c('orange', 'red', 'magenta', 'royalblue')
+
+plot_predictions(start_date = pred_start_date)
+```
+
+
+```{python, echo=FALSE}
+vp_stretcher_rides = ts.oos_weekly_df(model=model,
+                            steps_ahead=horizon,
+                            exog_data = oos_exog,
+                            series = series,
+                            add_date = False)
+fcast = prepare_r_conversion(vp_stretcher_rides, 'index')
+```
+
+
+### Table of Forecast Values
+<div style = "width:60%; height:auto; margin: auto;">
+```{r, echo=FALSE}
+r_df <- reticulate::py$fcast
+
+r_df$week_ending <- as.Date(r_df$week_ending)
+r_df <- r_df[,c(1,2)]
+
+makeTable(r_df, begin=2, end_col=2, 0)
+```
+</div>
+
+
+## Ver Pd Stretcher Costs
+```{python, echo=FALSE, warning=FALSE, message = FALSE}
+warnings.filterwarnings('ignore')
+
+series = 'vp_stretcher_costs'
+
+# use for last forecast
+series_prev_fcast = 'prev_' + series + '_fcast'
+
+train.index = pd.DatetimeIndex(train.index.values,
+                               freq=train.index.inferred_freq)
+
+model = ts.build_model(train[series],
+                       p=2,
+                       d=1,
+                       q=0,
+                       S=5,
+                       exog_data = train['holiday'],
+                       P=1,
+                       D=1,
+                       Q=2)
+
+# model.summary()
+```
+
+
+```{python, echo=FALSE}
+# ts.get_dw(model)
+```
+
+
+
+```{python, echo=FALSE}
+backtest = ts.backtest_model(model,
+                             train = train,
+                             exog_data=train['holiday'][1:],
+                             end = len(train)-1)
+backtest = pd.DataFrame(backtest)
+```
+
+
+```{python, echo=FALSE}
+# make predictions
+predictions = ts.make_predictions(model,
+                               series + ' SARIMAX',
+                               start=len(train),
+                               end= len(train) + horizon-1,
+                               exog_data=oos_exog)
+                               
+                               
+# make the OOS intervals
+intervals = ts.get_oos_conf_interval(model=model,
+                                     steps_ahead=horizon,
+                                     exog_data = oos_exog)
+
+# make the confidence df
+conf_df = ts.make_oos_plot_df(model=model,
+                           steps_ahead=horizon,
+                           exog_data = oos_exog)                                    
+
+```
+
+
+```{python, echo=FALSE}
+# specific for each series
+r_back = prepare_r_conversion(backtest, 'index')
+
+r_pred = prepare_r_conversion(conf_df, 'index')    
+```
+
+
+```{r, echo = FALSE}
+# get the backtest data
+r_back <- reticulate::py$r_back
+
+# make the python series name a series object
+series <- py$series
+series_prev_fcast <- py$series_prev_fcast
+
+# rename the desired column
+# mtcars %>% rename_at(vars(col_name), ~ new_name)
+prev_fcast <- prev_fcast %>% rename_at(vars(series), ~ series_prev_fcast)
+
+```
+
+
+
+```{r, echo=FALSE}
+# convert r_pred
+r_pred <- reticulate::py$r_pred
+
+# clean up column names to clean numbers
+colnames(r_pred) <- c('week_ending', 'Predictions',
+                           'lower_conf_limit', 'upper_conf_limit')
+# convert to date format
+r_pred$week_ending <- as.Date(r_pred$week_ending)
+```
+
+
+
+```{r, echo=FALSE}
+# make the dates
+
+r_back$week_ending <- as.Date(r_back$week_ending)
+
+r_pred$week_ending <- as.Date(r_pred$week_ending)
+```
+
+
+### Fit of Model vs Actual
+```{r, echo=FALSE}
+# plot the backtest
+myPal <- c('orange', 'royalblue')
+
+
+plot_backtest(start_date = back_start_date)
+```
+
+
+### Plot of Predictions
+```{r, echo=FALSE}
+# palette for : backtest, actual, predictions, upper, lower
+pred_pal <- c('orange', 'red', 'magenta', 'royalblue')
+
+plot_predictions(start_date = pred_start_date)
+```
+
+
+```{python, echo=FALSE}
+vp_stretcher_costs = ts.oos_weekly_df(model=model,
+                            steps_ahead=horizon,
+                            exog_data = oos_exog,
+                            series = series,
+                            add_date = False)
+fcast = prepare_r_conversion(vp_stretcher_costs, 'index')
+```
+
+
+### Table of Forecast Values
+<div style = "width:60%; height:auto; margin: auto;">
+```{r, echo=FALSE}
+r_df <- reticulate::py$fcast
+
+r_df$week_ending <- as.Date(r_df$week_ending)
+r_df <- r_df[,c(1,2)]
+
+makeTable(r_df, begin=2, end_col=2, 0)
+```
+</div>
+
+
+## Ver Pd Stretcher Miles
+```{python, echo=FALSE, warning=FALSE, message = FALSE}
+warnings.filterwarnings('ignore')
+
+series = 'vp_stretcher_miles'
+
+# use for last forecast
+series_prev_fcast = 'prev_' + series + '_fcast'
+
+train.index = pd.DatetimeIndex(train.index.values,
+                               freq=train.index.inferred_freq)
+
+model = ts.build_model(train[series],
+                       p=2,
+                       d=1,
+                       q=0,
+                       S=5,
+                       exog_data = train['holiday'],
+                       P=1,
+                       D=1,
+                       Q=1)
+
+# model.summary()
+```
+
+
+```{python, echo=FALSE}
+# ts.get_dw(model)
+```
+
+
+
+```{python, echo=FALSE}
+backtest = ts.backtest_model(model,
+                             train = train,
+                             exog_data=train['holiday'][1:],
+                             end = len(train)-1)
+backtest = pd.DataFrame(backtest)
+```
+
+
+```{python, echo=FALSE}
+# make predictions
+predictions = ts.make_predictions(model,
+                               series + ' SARIMAX',
+                               start=len(train),
+                               end= len(train) + horizon-1,
+                               exog_data=oos_exog)
+                               
+                               
+# make the OOS intervals
+intervals = ts.get_oos_conf_interval(model=model,
+                                     steps_ahead=horizon,
+                                     exog_data = oos_exog)
+
+# make the confidence df
+conf_df = ts.make_oos_plot_df(model=model,
+                           steps_ahead=horizon,
+                           exog_data = oos_exog)                                    
+
+```
+
+
+```{python, echo=FALSE}
+# specific for each series
+r_back = prepare_r_conversion(backtest, 'index')
+
+r_pred = prepare_r_conversion(conf_df, 'index')    
+```
+
+
+```{r, echo = FALSE}
+# get the backtest data
+r_back <- reticulate::py$r_back
+
+# make the python series name a series object
+series <- py$series
+series_prev_fcast <- py$series_prev_fcast
+
+# rename the desired column
+# mtcars %>% rename_at(vars(col_name), ~ new_name)
+prev_fcast <- prev_fcast %>% rename_at(vars(series), ~ series_prev_fcast)
+
+```
+
+
+
+```{r, echo=FALSE}
+# convert r_pred
+r_pred <- reticulate::py$r_pred
+
+# clean up column names to clean numbers
+colnames(r_pred) <- c('week_ending', 'Predictions',
+                           'lower_conf_limit', 'upper_conf_limit')
+# convert to date format
+r_pred$week_ending <- as.Date(r_pred$week_ending)
+```
+
+
+
+```{r, echo=FALSE}
+# make the dates
+
+r_back$week_ending <- as.Date(r_back$week_ending)
+
+r_pred$week_ending <- as.Date(r_pred$week_ending)
+```
+
+
+### Fit of Model vs Actual
+```{r, echo=FALSE}
+# plot the backtest
+myPal <- c('orange', 'royalblue')
+
+
+plot_backtest(start_date = back_start_date)
+```
+
+
+### Plot of Predictions
+```{r, echo=FALSE}
+# palette for : backtest, actual, predictions, upper, lower
+pred_pal <- c('orange', 'red', 'magenta', 'royalblue')
+
+plot_predictions(start_date = pred_start_date)
+```
+
+
+```{python, echo=FALSE}
+vp_stretcher_miles = ts.oos_weekly_df(model=model,
+                            steps_ahead=horizon,
+                            exog_data = oos_exog,
+                            series = series,
+                            add_date = False)
+fcast = prepare_r_conversion(vp_stretcher_miles, 'index')
+```
+
+
+### Table of Forecast Values
+<div style = "width:60%; height:auto; margin: auto;">
+```{r, echo=FALSE}
+r_df <- reticulate::py$fcast
+
+r_df$week_ending <- as.Date(r_df$week_ending)
+r_df <- r_df[,c(1,2)]
+
+makeTable(r_df, begin=2, end_col=2, 0)
+```
+</div>
+
+
+## Ver Pd Wheelchair Rides
+```{python, echo=FALSE, warning=FALSE, message = FALSE}
+warnings.filterwarnings('ignore')
+
+series = 'vp_wheelchair_rides'
+
+# use for last forecast
+series_prev_fcast = 'prev_' + series + '_fcast'
+
+
+train.index = pd.DatetimeIndex(train.index.values,
+                               freq=train.index.inferred_freq)
+
+model = ts.build_model(train[series],
+                       p=2,
+                       d=1,
+                       q=0,
+                       S=12,
+                       exog_data = train['holiday'],
+                       P=2,
+                       D=1,
+                       Q=0)
+
+# model.summary()
+```
+
+
+```{python, echo=FALSE}
+# ts.get_dw(model)
+```
+
+
+
+```{python, echo=FALSE}
+backtest = ts.backtest_model(model,
+                             train = train,
+                             exog_data=train['holiday'][1:],
+                             end = len(train)-1)
+backtest = pd.DataFrame(backtest)
+```
+
+
+```{python, echo=FALSE}
+# make predictions
+predictions = ts.make_predictions(model,
+                               series + ' SARIMAX',
+                               start=len(train),
+                               end= len(train) + horizon-1,
+                               exog_data=oos_exog)
+                               
+                               
+# make the OOS intervals
+intervals = ts.get_oos_conf_interval(model=model,
+                                     steps_ahead=horizon,
+                                     exog_data = oos_exog)
+
+# make the confidence df
+conf_df = ts.make_oos_plot_df(model=model,
+                           steps_ahead=horizon,
+                           exog_data = oos_exog)                                    
+
+```
+
+
+```{python, echo=FALSE}
+# specific for each series
+r_back = prepare_r_conversion(backtest, 'index')
+
+r_pred = prepare_r_conversion(conf_df, 'index')    
+```
+
+
+```{r, echo = FALSE}
+# get the backtest data
+r_back <- reticulate::py$r_back
+
+# make the python series name a series object
+series <- py$series
+series_prev_fcast <- py$series_prev_fcast
+
+# rename the desired column
+# mtcars %>% rename_at(vars(col_name), ~ new_name)
+prev_fcast <- prev_fcast %>% rename_at(vars(series), ~ series_prev_fcast)
+
+```
+
+
+
+```{r, echo=FALSE}
+# convert r_pred
+r_pred <- reticulate::py$r_pred
+
+# clean up column names to clean numbers
+colnames(r_pred) <- c('week_ending', 'Predictions',
+                           'lower_conf_limit', 'upper_conf_limit')
+# convert to date format
+r_pred$week_ending <- as.Date(r_pred$week_ending)
+```
+
+
+
+```{r, echo=FALSE}
+# make the dates
+
+r_back$week_ending <- as.Date(r_back$week_ending)
+
+r_pred$week_ending <- as.Date(r_pred$week_ending)
+```
+
+
+### Fit of Model vs Actual
+```{r, echo=FALSE}
+# plot the backtest
+myPal <- c('orange', 'royalblue')
+
+
+plot_backtest(start_date = back_start_date)
+```
+
+
+### Plot of Predictions
+```{r, echo=FALSE}
+# palette for : backtest, actual, predictions, upper, lower
+pred_pal <- c('orange', 'red', 'magenta', 'royalblue')
+
+plot_predictions(start_date = pred_start_date)
+```
+
+
+```{python, echo=FALSE}
+vp_wheelchair_rides = ts.oos_weekly_df(model=model,
+                            steps_ahead=horizon,
+                            exog_data = oos_exog,
+                            series = series,
+                            add_date = False)
+fcast = prepare_r_conversion(vp_wheelchair_rides, 'index')
+```
+
+
+### Table of Forecast Values
+<div style = "width:60%; height:auto; margin: auto;">
+```{r, echo=FALSE}
+r_df <- reticulate::py$fcast
+
+r_df$week_ending <- as.Date(r_df$week_ending)
+r_df <- r_df[,c(1,2)]
+
+makeTable(r_df, begin=2, end_col=2, 0)
+```
+</div>
+
+
+## Ver Pd Wheelchair Costs
+```{python, echo=FALSE, warning=FALSE, message = FALSE}
+warnings.filterwarnings('ignore')
+
+series = 'vp_wheelchair_costs'
+
+# use for last forecast
+series_prev_fcast = 'prev_' + series + '_fcast'
+
+train.index = pd.DatetimeIndex(train.index.values,
+                               freq=train.index.inferred_freq)
+
+model = ts.build_model(train[series],
+                       p=2,
+                       d=1,
+                       q=0,
+                       S=6,
+                       exog_data = train['holiday'],
+                       P=2,
+                       D=1,
+                       Q=0)
+
+# model.summary()
+```
+
+
+```{python, echo=FALSE}
+# ts.get_dw(model)
+```
+
+
+
+```{python, echo=FALSE}
+backtest = ts.backtest_model(model,
+                             train = train,
+                             exog_data=train['holiday'][1:],
+                             end = len(train)-1)
+backtest = pd.DataFrame(backtest)
+```
+
+
+```{python, echo=FALSE}
+# make predictions
+predictions = ts.make_predictions(model,
+                               series + ' SARIMAX',
+                               start=len(train),
+                               end= len(train) + horizon-1,
+                               exog_data=oos_exog)
+                               
+                               
+# make the OOS intervals
+intervals = ts.get_oos_conf_interval(model=model,
+                                     steps_ahead=horizon,
+                                     exog_data = oos_exog)
+
+# make the confidence df
+conf_df = ts.make_oos_plot_df(model=model,
+                           steps_ahead=horizon,
+                           exog_data = oos_exog)                                    
+
+```
+
+
+```{python, echo=FALSE}
+# specific for each series
+r_back = prepare_r_conversion(backtest, 'index')
+
+r_pred = prepare_r_conversion(conf_df, 'index')    
+```
+
+
+```{r, echo = FALSE}
+# get the backtest data
+r_back <- reticulate::py$r_back
+
+# make the python series name a series object
+series <- py$series
+series_prev_fcast <- py$series_prev_fcast
+
+# rename the desired column
+# mtcars %>% rename_at(vars(col_name), ~ new_name)
+prev_fcast <- prev_fcast %>% rename_at(vars(series), ~ series_prev_fcast)
+
+```
+
+
+
+```{r, echo=FALSE}
+# convert r_pred
+r_pred <- reticulate::py$r_pred
+
+# clean up column names to clean numbers
+colnames(r_pred) <- c('week_ending', 'Predictions',
+                           'lower_conf_limit', 'upper_conf_limit')
+# convert to date format
+r_pred$week_ending <- as.Date(r_pred$week_ending)
+```
+
+
+
+```{r, echo=FALSE}
+# make the dates
+
+r_back$week_ending <- as.Date(r_back$week_ending)
+
+r_pred$week_ending <- as.Date(r_pred$week_ending)
+```
+
+
+### Fit of Model vs Actual
+```{r, echo=FALSE}
+# plot the backtest
+myPal <- c('orange', 'royalblue')
+
+
+plot_backtest(start_date = back_start_date)
+```
+
+
+### Plot of Predictions
+```{r, echo=FALSE}
+# palette for : backtest, actual, predictions, upper, lower
+pred_pal <- c('orange', 'red', 'magenta', 'royalblue')
+
+plot_predictions(start_date = pred_start_date)
+```
+
+
+
+
+```{python, echo=FALSE}
+vp_wheelchair_costs = ts.oos_weekly_df(model=model,
+                            steps_ahead=horizon,
+                            exog_data = oos_exog,
+                            series = series,
+                            add_date = False)
+fcast = prepare_r_conversion(vp_wheelchair_costs, 'index')
+```
+
+
+### Table of Forecast Values
+<div style = "width:60%; height:auto; margin: auto;">
+```{r, echo=FALSE}
+r_df <- reticulate::py$fcast
+
+r_df$week_ending <- as.Date(r_df$week_ending)
+r_df <- r_df[,c(1,2)]
+
+makeTable(r_df, begin=2, end_col=2, 0)
+```
+</div>
+
+
+## Ver Pd Wheelchair Miles
+```{python, echo=FALSE, warning=FALSE, message = FALSE}
+warnings.filterwarnings('ignore')
+
+series = 'vp_wheelchair_miles'
+
+# use for last forecast
+series_prev_fcast = 'prev_' + series + '_fcast'
+
+# get the outlier
+outlier = train[series].quantile(0.95)
+
+# get the median
+median = train[series].quantile(0.50)
+
+# replace the outliers
+train[series] = np.where(train[series] > outlier, median,train[series])
+
+# get adjusted series
+adj_df = prepare_r_conversion(train, 'week_ending')
+adj_df.rename(columns = {'index': 'week_ending'}, inplace = True)
+
+
+train.index = pd.DatetimeIndex(train.index.values,
+                               freq=train.index.inferred_freq)
+
+model = ts.build_model(train[series],
+                       p=0,
+                       d=0,
+                       q=1,
+                       S=12,
+                       exog_data = train['holiday'],
+                       P=0,
+                       D=1,
+                       Q=1)
+
+# model.summary()
+```
+
+
+```{python, echo=FALSE}
+# ts.get_dw(model)
+```
+
+
+
+```{python, echo=FALSE}
+backtest = ts.backtest_model(model,
+                             train = train,
+                             exog_data=train['holiday'][1:],
+                             end = len(train)-1)
+backtest = pd.DataFrame(backtest)
+```
+
+
+```{python, echo=FALSE}
+# make predictions
+predictions = ts.make_predictions(model,
+                               series + ' SARIMAX',
+                               start=len(train),
+                               end= len(train) + horizon-1,
+                               exog_data=oos_exog)
+                               
+                               
+# make the OOS intervals
+intervals = ts.get_oos_conf_interval(model=model,
+                                     steps_ahead=horizon,
+                                     exog_data = oos_exog)
+
+# make the confidence df
+conf_df = ts.make_oos_plot_df(model=model,
+                           steps_ahead=horizon,
+                           exog_data = oos_exog)                                    
+
+```
+
+
+```{python, echo=FALSE}
+# specific for each series
+r_back = prepare_r_conversion(backtest, 'index')
+
+r_pred = prepare_r_conversion(conf_df, 'index')
+
+```
+
+
+```{r, echo = FALSE}
+# get the backtest data
+r_back <- reticulate::py$r_back
+
+# get adjusted series data
+r_train <- reticulate::py$adj_df
+
+# make all the dates
+r_train$week_ending <- as.Date(r_train$week_ending)
+
+# make the python series name a series object
+series <- py$series
+series_prev_fcast <- py$series_prev_fcast
+
+# rename the desired column
+# mtcars %>% rename_at(vars(col_name), ~ new_name)
+prev_fcast <- prev_fcast %>% rename_at(vars(series), ~ series_prev_fcast)
+
+```
+
+
+
+
+```{r, echo=FALSE}
+# convert r_pred
+r_pred <- reticulate::py$r_pred
+
+# clean up column names to clean numbers
+colnames(r_pred) <- c('week_ending', 'Predictions',
+                           'lower_conf_limit', 'upper_conf_limit')
+# convert to date format
+r_pred$week_ending <- as.Date(r_pred$week_ending)
+```
+
+
+
+```{r, echo=FALSE}
+# make the dates
+
+r_back$week_ending <- as.Date(r_back$week_ending)
+
+r_pred$week_ending <- as.Date(r_pred$week_ending)
+```
+
+
+### Fit of Model vs Actual
+```{r, echo=FALSE}
+# plot the backtest
+myPal <- c('orange', 'royalblue')
+
+plot_backtest(start_date = back_start_date)
+```
+
+
+### Plot of Predictions
+```{r, echo=FALSE}
+# palette for : backtest, actual, predictions, upper, lower
+pred_pal <- c('orange', 'red', 'magenta', 'royalblue')
+
+plot_predictions(start_date = pred_start_date)
+```
+
+
+```{python, echo=FALSE}
+vp_wheelchair_miles = ts.oos_weekly_df(model=model,
+                            steps_ahead=horizon,
+                            exog_data = oos_exog,
+                            series = series,
+                            add_date = False)
+fcast = prepare_r_conversion(vp_wheelchair_miles, 'index')
+```
+
+
+### Table of Forecast Values
+<div style = "width:60%; height:auto; margin: auto;">
+```{r, echo=FALSE}
+r_df <- reticulate::py$fcast
+
+r_df$week_ending <- as.Date(r_df$week_ending)
+r_df <- r_df[,c(1,2)]
+
+makeTable(r_df, begin=2, end_col=2, 0)
+```
+</div>
+
+
+## CPM
+```{python, echo=FALSE, warning=FALSE, message = FALSE}
+warnings.filterwarnings('ignore')
+
+series = 'cpm'
+
+series_fcast = series + '_fcast'
+
+# use for last forecast
+series_prev_fcast = 'prev_' + series_fcast
+
+# get the outlier
+outlier = train[series].quantile(.01)
+
+# get the median
+median = train[series].quantile(0.50)
+
+# replace the outliers
+train[series] = np.where(train[series] < outlier, median,train[series])
+
+# get adjusted series
+adj_df = prepare_r_conversion(train, 'week_ending')
+adj_df.rename(columns = {'index': 'week_ending'}, inplace = True)
+
+
+train.index = pd.DatetimeIndex(train.index.values,
+                               freq=train.index.inferred_freq)
+
+model = ts.build_model(train[series],
+                       p=3,
+                       d=1,
+                       q=0,
+                       S=6,
+                       exog_data = train['holiday'],
+                       P=3,
+                       D=1,
+                       Q=0)
+
+# model.summary()
+```
+
+
+```{python, echo=FALSE}
+# ts.get_dw(model)
+```
+
+
+
+```{python, echo=FALSE}
+backtest = ts.backtest_model(model,
+                             train = train,
+                             exog_data=train['holiday'][1:],
+                             end = len(train)-1)
+backtest = pd.DataFrame(backtest)
+```
+
+
+```{python, echo=FALSE}
+# make predictions
+predictions = ts.make_predictions(model,
+                               series + ' SARIMAX',
+                               start=len(train),
+                               end= len(train) + horizon-1,
+                               exog_data=oos_exog)
+                               
+                               
+# make the OOS intervals
+intervals = ts.get_oos_conf_interval(model=model,
+                                     steps_ahead=horizon,
+                                     exog_data = oos_exog)
+
+# make the confidence df
+conf_df = ts.make_oos_plot_df(model=model,
+                           steps_ahead=horizon,
+                           exog_data = oos_exog)                                    
+
+```
+
+
+```{python, echo=FALSE}
+# specific for each series
+r_back = prepare_r_conversion(backtest, 'index')
+
+r_pred = prepare_r_conversion(conf_df, 'index')    
+```
+
+
+```{r, echo = FALSE}
+# get the backtest data
+r_back <- reticulate::py$r_back
+
+# get adjusted series data
+r_train <- reticulate::py$adj_df
+
+# make all the dates
+r_train$week_ending <- as.Date(r_train$week_ending)
+
+# make the python series name a series object
+series <- reticulate::py$series
+series_prev_fcast <- py$series_prev_fcast
+
+# rename the desired column
+# mtcars %>% rename_at(vars(col_name), ~ new_name)
+prev_fcast <- prev_fcast %>% rename_at(vars(series), ~ series_prev_fcast)
+
+```
+
+
+
+
+```{r, echo=FALSE}
+# convert r_pred
+r_pred <- reticulate::py$r_pred
+
+# clean up column names to clean numbers
+colnames(r_pred) <- c('week_ending', 'Predictions',
+                           'lower_conf_limit', 'upper_conf_limit')
+# convert to date format
+r_pred$week_ending <- as.Date(r_pred$week_ending)
+```
+
+
+
+```{r, echo=FALSE}
+# make the dates
+
+r_back$week_ending <- as.Date(r_back$week_ending)
+
+r_pred$week_ending <- as.Date(r_pred$week_ending)
+```
+
+
+### Fit of Model vs Actual
+```{r, echo=FALSE}
+# plot the backtest
+myPal <- c('orange', 'royalblue')
+
+
+plot_backtest(start_date = back_start_date, decimal = TRUE)
+```
+
+
+### Plot of Predictions
+```{r, echo=FALSE}
+# palette for : backtest, actual, predictions, upper, lower
+
+pred_pal <- c('orange', 'royalblue', 'red', 'magenta')
+
+
+plot_predictions(start_date = pred_start_date, decimal = TRUE)
+```
+
+
+```{python, echo=FALSE}
+cpm_fcast = ts.oos_weekly_df(model=model,
+                            steps_ahead=horizon,
+                            exog_data = oos_exog,
+                            series = series,
+                            add_date = False)
+fcast = prepare_r_conversion(cpm_fcast, 'index')
+```
+
+
+### Table of Forecast Values
+<div style = "width:60%; height:auto; margin: auto;">
+```{r, echo=FALSE}
+r_df <- reticulate::py$fcast
+
+r_df$week_ending <- as.Date(r_df$week_ending)
+r_df <- r_df[,c(1,2)]
+
+makeTable(r_df, begin=2, end_col=2, 2)
+
+```
+</div>
+
+
+
+## Combined Weekly & Monthly Forecasts
+```{python, echo=FALSE}
+# remove riders and gross rides
+list_cols = list(wdf.columns)
+list_cols[0] = 'holidays'
+
+
+# exclude items needing adjustments
+exclude = ['gross_rides', 'riders', 'holidays', 'cpm']
+vp_cols = [e for e in list_cols if e not in exclude]
+
+```
+
+
+
+
+```{python, echo=FALSE}
+# make a list of dataframes using the columns
+# create empty list
+vp_df = []
+
+for df in vp_cols:
+    # use eval to handle the string name as actual df
+    df = pd.DataFrame(eval(df))
+    vp_df.append(df)
+
+# concat them all into a single df
+combined_wide = pd.concat(vp_df, axis = 1)
+```
+
+
+```{python, combineall, echo=FALSE}
+# make a single data frame 
+combined_wide = pd.concat([oos_exog, gross_rides_fcast, riders_fcast, combined_wide], axis = 1)
+
+# drop the confidence limits by filtering on the 'upper_' and 'lower_'
+regex = r"(upper_[a-z]*)|(lower_[a-z]*)"
+combined_wide = combined_wide[combined_wide.columns.drop(list(combined_wide.filter(regex=regex)))]
+
+
+# add in the excluded series
+combined_wide['cpm_fcast'] = cpm_fcast['cpm']
+
+# adjust for rollup missing values due to dates
+# combined_wide['gross_rides'].iloc[9] = wdf['gross_rides'][-1]
+# combined_wide['riders'].iloc[9] = wdf['riders'][-1]
+
+# rename gross rides, riders and cpm
+combined_wide = combined_wide.rename(columns={'gross_rides': 'gross_rides_fcast',
+'riders': 'riders_fcast', 'cpm': 'cpm_fcast'})
+
+
+# prepare to make r object
+all_df_table = prepare_r_conversion(combined_wide, 'index')
+```
+
+
+
+
+
+### Table of Weekly Forecast Values
+```{r, echo=FALSE}
+# make wide table
+# function makes a DT table with export buttons
+# applies func
+fullTable <- function(df){
+    datatable(df, options = list(
+                                 dom = 'Bfrtip',
+                                 pageLength = 24,
+                                 buttons = list("excel", "csv")
+    )) %>% 
+        formatRound(columns = c(2:16), digits = 0) %>% 
+        formatRound(columns = c(17), digits = 2)
+}
+
+
+# convert python objec to R
+all_df <- reticulate::py$all_df_table
+
+# make it a date
+all_df$week_ending <- as.Date(all_df$week_ending)
+
+# create the table
+fullTable(all_df)
+```
+
+
+
+
+### Table of Monthly Forecast Values
+```{python, echo=FALSE}
+# reset the index to work with date components
+# start with all_df_table
+month_df = all_df_table.copy()
+month_df = month_df.fillna(0)
+
+# make week_ending a date
+month_df['week_ending'] = pd.to_datetime(month_df['week_ending'])
+
+# get the day
+month_df['day'] = month_df['week_ending'].dt.day
+
+```
+
+
+
+```{python, rollbackfunc, echo=FALSE}
+# define the functions
+from datetime import timedelta
+
+
+# rollback
+def roll_back(row):
+    # shift a date back one day if the week ends on the 1st
+    if row['day'] == 1:
+        return row['week_ending'] - timedelta(days = 1)
+    else:
+        return row['week_ending']
+    
+    
+# use the dictionary to assign a days_inmonth value
+# create a dictionary of months for allocating
+# function to get the number of days in month
+def get_monthdays(month):
+    month_len = {1:31, 2:28, 3:31, 4:30, 5:31, 6:30, 7:31, 8:31, 9:30, 10:31, 11:30, 12:31}
+    return month_len.get(month)   
+    
+# create simple boolean converter
+# df.apply(lambda x: func(x['col1'],x['col2']),axis=1)
+def convert_end(row):
+    # find the rows that end the month
+    # mark it with end
+    if row:
+        return 'end'
+    else:
+        return '0'
+    
+def convert_begin(row):
+    # find the rows that begin the month
+    # makr it with begin
+    if row:
+        return 'begin'
+    else:
+        return '0'
+
+
+def get_max(row):
+    # get the begin and end strings
+    max_string = max(row['end'], row['begin'])
+    return max_string    
+
+
+# adjustment factor for begin and ending weeks
+# make adjustment factors
+def adj_weeks(row):
+    # adjust the beginning for partial weeks
+    # uses a cumulative amount
+    # based on day of week not all days are equal
+    # normalized to 5.3 days in a week
+    cum_sum = 5.3
+    begin_portion = {1:.05, 2:.3, 3:1.3, 4:2.3, 5: 3.3, 6: 4.3, 7:5.3, 8:5.8}
+    end_portion = {1: 1, 2:2, 3:3, 4:4, 5:5, 6:5.25}
+    factor = 1
+    if row['position'] == 'begin':
+        factor = begin_portion.get(row['day'])
+        factor = (factor + 0.5 * row['holiday'])/cum_sum
+            
+    
+    # adjust the last week for partial periods too
+    elif row['position'] == 'end':
+        if row['day'] < row['days_inmonth']:
+            day_delta = row['days_inmonth'] - row['day']
+            factor = end_portion.get(day_delta)
+            factor = 1 + (factor - .5 * row['holiday'])/cum_sum
+    else:
+        # set all others to 1
+        factor = 1
+    return factor
+```
+
+
+```{python, runfuncts, echo=FALSE}
+month_df['week_ending'] = month_df.apply(roll_back, axis = 1)
+
+
+# get the difference between days
+month_df['days_between'] = month_df['week_ending'].diff()/np.timedelta64(1, 'D')
+
+# backfill the NAN created at the beginning
+month_df = month_df.fillna(0)
+
+# set the index
+# extract the adjusted month
+# reset the actual days from the offset
+month_df['month'] = month_df['week_ending'].dt.month
+month_df['day'] = month_df['week_ending'].dt.day
+
+# reset the index
+month_df.set_index('week_ending', inplace = True)
+
+
+# get the monthdays
+month_df['days_inmonth'] = month_df['month'].apply(get_monthdays)
+
+```
+
+
+```{python, makeindicators, echo=FALSE}
+# make a clean copy
+week_pos = month_df.copy()
+
+# shift back for end
+# return booleans
+week_pos['end'] = week_pos['month'].shift(-1) != week_pos['month']
+
+week_pos['begin'] = week_pos['month'].shift(1) != week_pos['month']
+
+# convert booleans to words
+week_pos['end'] = week_pos['end'].apply(convert_end)
+week_pos['begin'] = week_pos['begin'].apply(convert_begin)
+
+# set the first position to True
+week_pos['position'] = week_pos.apply(get_max, axis = 1)
+
+# drop the columns
+week_pos.drop(['end', 'begin'], inplace = True, axis = 1)
+
+week_pos['adj_factor'] = week_pos.apply(adj_weeks, axis = 1)
+
+
+```
+
+
+```{python, splitdf, echo=FALSE}
+# get the column names in a list
+col_names = list(week_pos.columns)
+
+# break out cpm
+adj_cpm = month_df[['cpm_fcast']]
+
+# get column names
+short_list = col_names[1:15]
+
+
+# make new preds by multiplying all by adjustment factor
+new_preds = week_pos[short_list].multiply(week_pos["adj_factor"], axis="index")
+
+
+# resample new preds
+# extract the month after adjustments
+month_preds = new_preds.resample('M').aggregate({np.sum})
+
+# resample adj_cpm
+adj_cpm = adj_cpm.resample('M').aggregate({np.mean})
+```
+
+
+```{python, mergerollup, echo=FALSE}
+# make a single table
+month_table = pd.concat([month_preds, adj_cpm], axis = 1)
+
+
+
+# prepare for conversion from pyton to R
+
+monthly = prepare_r_conversion(month_table, column_to_change = 'week_ending', new_name='month_ending')
+
+
+# convert date to string
+monthly['month_ending'] = pd.to_datetime(monthly['month_ending']).dt.strftime('%Y-%m-%d')
+```
+
+
+
+
+```{r, echo=FALSE}
+# make wide table
+# ake a table with export buttons and formatting
+fullTable <- function(df){
+    datatable(df, options = list(
+                                 dom = 'Bfrtip',
+                                 pageLength = 20,
+                                 buttons = list("excel", "csv")
+    )) %>% 
+        formatRound(columns = c(2:15), digits = 0) %>%
+        formatRound(columns = c(16), digits = 2) 
+}
+
+
+# create the r object
+monthly_r <- reticulate::py$monthly
+
+#direct change to names
+colnames(monthly_r) <- gsub("sum", "", colnames(monthly_r))
+colnames(monthly_r) <- gsub("mean", "", colnames(monthly_r))
+
+# change the names from rollup
+fullTable(monthly_r)
+
